@@ -14,6 +14,8 @@ class SuperAdminDashboard extends StatefulWidget {
 }
 
 class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
+  static const String _allowedAttachmentTypes =
+      '.pdf,.doc,.docx,.xls,.xlsx';
   static const List<String> _forwardedToOptions = [
     'Admin',
     'Procurement',
@@ -49,12 +51,14 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   String _searchText = '';
   String _exportFilter = 'Week';
   String? _selectedForwardedTo;
+  String? _selectedMain;
+  String? _selectedSub;
   String _selectedPdfDataUrl = '';
+  List<String> _mainOptions = [];
+  List<String> _subOptions = [];
   DateTime? _selectedDateReceived;
   DateTimeRange _selectedExportRange = DateTimeRange(
-    start: DateTime.now().subtract(
-      Duration(days: DateTime.now().weekday - 1),
-    ),
+    start: DateTime.now().subtract(Duration(days: DateTime.now().weekday - 1)),
     end: DateTime.now().add(
       Duration(days: DateTime.daysPerWeek - DateTime.now().weekday),
     ),
@@ -148,14 +152,22 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
 
   Future<void> _addDocument() async {
     if (!(_formKey.currentState?.validate() ?? false) ||
-        _selectedDateReceived == null) {
+        _selectedDateReceived == null ||
+        _selectedMain == null ||
+        _selectedSub == null) {
       return;
     }
+
+    final rdsMain = _selectedMain!.trim();
+    final rdsSub = _selectedSub!.trim();
+    final rdsCode = '$rdsMain - $rdsSub';
 
     try {
       await FirebaseFirestore.instance.collection('documents').add({
         'dateReceived': Timestamp.fromDate(_selectedDateReceived!),
-        'rdsCode': _rdsCodeController.text.trim(),
+        'rdsMain': rdsMain,
+        'rdsSub': rdsSub,
+        'rdsCode': rdsCode,
         'controlNumber': _controlNumberController.text.trim(),
         'office': _officeController.text.trim(),
         'particular': _particularController.text.trim(),
@@ -199,6 +211,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     setState(() {
       _selectedDateReceived = null;
       _selectedForwardedTo = null;
+      _selectedMain = null;
+      _selectedSub = null;
+      _mainOptions = [];
+      _subOptions = [];
     });
     _dateReceivedController.clear();
     _rdsCodeController.clear();
@@ -210,6 +226,444 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     _actionTakenController.clear();
     _remarksController.clear();
     _selectedPdfDataUrl = '';
+  }
+
+  Map<String, List<String>> _buildRdsOptionsMap(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final Map<String, List<String>> optionsMap = {};
+
+    for (final doc in docs) {
+      final data = doc.data();
+      final name = (data['name'] ?? '').toString().trim();
+      if (name.isEmpty) {
+        continue;
+      }
+
+      final rawSubcategories = data['subcategories'];
+      final subcategories = rawSubcategories is Iterable
+          ? rawSubcategories
+                .map((item) => item.toString().trim())
+                .where((item) => item.isNotEmpty)
+                .toList()
+          : <String>[];
+
+      optionsMap[name] = subcategories;
+    }
+
+    return optionsMap;
+  }
+
+  void _syncRdsSelectionFromOptions(Map<String, List<String>> optionsMap) {
+    _mainOptions = optionsMap.keys.toList()..sort();
+
+    if (_selectedMain != null && !_mainOptions.contains(_selectedMain)) {
+      _selectedMain = null;
+      _selectedSub = null;
+    }
+
+    _subOptions = _selectedMain != null
+        ? List<String>.from(optionsMap[_selectedMain] ?? const <String>[])
+        : <String>[];
+
+    if (_selectedSub != null && !_subOptions.contains(_selectedSub)) {
+      _selectedSub = null;
+    }
+
+    _rdsCodeController.text = _selectedMain != null && _selectedSub != null
+        ? '$_selectedMain - $_selectedSub'
+        : '';
+  }
+
+  Future<void> _showAddRdsMainDialog(
+    void Function(VoidCallback fn) setDialogState,
+  ) async {
+    final mainController = TextEditingController();
+    final initialSubController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _isDark
+            ? const Color(0xFF161E27)
+            : const Color(0xFFFBF9F5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'Add RDS Code',
+          style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: mainController,
+                  decoration: _dialogInputDecoration('Main Category'),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Required';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: initialSubController,
+                  decoration: _dialogInputDecoration(
+                    'Initial Sub Category',
+                    hintText: 'Optional',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (!(formKey.currentState?.validate() ?? false)) {
+                return;
+              }
+
+              final mainName = mainController.text.trim();
+              final initialSub = initialSubController.text.trim();
+
+              try {
+                final existing = await FirebaseFirestore.instance
+                    .collection('rds_options')
+                    .where('name', isEqualTo: mainName)
+                    .limit(1)
+                    .get();
+
+                if (existing.docs.isEmpty) {
+                  await FirebaseFirestore.instance
+                      .collection('rds_options')
+                      .add({
+                        'name': mainName,
+                        'subcategories': initialSub.isEmpty ? [] : [initialSub],
+                      });
+                } else if (initialSub.isNotEmpty) {
+                  await existing.docs.first.reference.update({
+                    'subcategories': FieldValue.arrayUnion([initialSub]),
+                  });
+                }
+
+                setDialogState(() {
+                  _selectedMain = mainName;
+                  _selectedSub = initialSub.isEmpty ? null : initialSub;
+                  _rdsCodeController.text = initialSub.isEmpty
+                      ? ''
+                      : '$mainName - $initialSub';
+                });
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('RDS code added successfully.'),
+                      backgroundColor: _successColor,
+                    ),
+                  );
+                }
+
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: $e'),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primaryColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    mainController.dispose();
+    initialSubController.dispose();
+  }
+
+  Future<void> _showAddRdsSubcategoryDialog(
+    void Function(VoidCallback fn) setDialogState,
+  ) async {
+    if (_selectedMain == null || _selectedMain!.trim().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Select a main RDS code first.'),
+            backgroundColor: Colors.orange.shade700,
+          ),
+        );
+      }
+      return;
+    }
+
+    final subController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _isDark
+            ? const Color(0xFF161E27)
+            : const Color(0xFFFBF9F5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'Add Sub Category',
+          style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: subController,
+              decoration: _dialogInputDecoration(
+                'Sub Category for ${_selectedMain!}',
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Required';
+                }
+                return null;
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (!(formKey.currentState?.validate() ?? false)) {
+                return;
+              }
+
+              final subName = subController.text.trim();
+
+              try {
+                final existing = await FirebaseFirestore.instance
+                    .collection('rds_options')
+                    .where('name', isEqualTo: _selectedMain)
+                    .limit(1)
+                    .get();
+
+                if (existing.docs.isEmpty) {
+                  throw Exception('Selected RDS code no longer exists.');
+                }
+
+                await existing.docs.first.reference.update({
+                  'subcategories': FieldValue.arrayUnion([subName]),
+                });
+
+                setDialogState(() {
+                  _selectedSub = subName;
+                  _rdsCodeController.text = '${_selectedMain!} - $subName';
+                });
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Sub category added successfully.'),
+                      backgroundColor: _successColor,
+                    ),
+                  );
+                }
+
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: $e'),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primaryColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    subController.dispose();
+  }
+
+  Widget _buildRdsCodeDropdowns(void Function(VoidCallback fn) setDialogState) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('rds_options').snapshots(),
+      builder: (context, snapshot) {
+        final docs = snapshot.data?.docs ?? [];
+        final optionsMap = _buildRdsOptionsMap(docs);
+        _syncRdsSelectionFromOptions(optionsMap);
+
+        final isLoading =
+            snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _mainOptions.contains(_selectedMain)
+                        ? _selectedMain
+                        : null,
+                    decoration: _dialogInputDecoration('RDS Code'),
+                    items: _mainOptions
+                        .map(
+                          (option) => DropdownMenuItem<String>(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: isLoading || _mainOptions.isEmpty
+                        ? null
+                        : (value) {
+                            setDialogState(() {
+                              _selectedMain = value;
+                              _selectedSub = null;
+                              _subOptions = List<String>.from(
+                                optionsMap[value] ?? const <String>[],
+                              );
+                              _rdsCodeController.clear();
+                            });
+                          },
+                    hint: Text(
+                      isLoading ? 'Loading main categories...' : 'Select main',
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Required';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _subOptions.contains(_selectedSub)
+                        ? _selectedSub
+                        : null,
+                    decoration: _dialogInputDecoration('Sub Category'),
+                    items: _subOptions
+                        .map(
+                          (option) => DropdownMenuItem<String>(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: _selectedMain == null || _subOptions.isEmpty
+                        ? null
+                        : (value) {
+                            setDialogState(() {
+                              _selectedSub = value;
+                              _rdsCodeController.text =
+                                  value != null && _selectedMain != null
+                                  ? '$_selectedMain - $value'
+                                  : '';
+                            });
+                          },
+                    hint: Text(
+                      _selectedMain == null
+                          ? 'Select main category first'
+                          : _subOptions.isEmpty
+                          ? 'No subcategories available'
+                          : 'Select sub',
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Required';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+              ],
+            ),
+            if (snapshot.hasError) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Unable to load RDS options right now.',
+                  style: TextStyle(
+                    color: Colors.red.shade700,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => _showAddRdsMainDialog(setDialogState),
+                  icon: const Icon(Icons.add_circle_outline),
+                  label: const Text('Add RDS Code'),
+                  style: TextButton.styleFrom(foregroundColor: _primaryColor),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: _selectedMain == null
+                      ? null
+                      : () => _showAddRdsSubcategoryDialog(setDialogState),
+                  icon: const Icon(Icons.playlist_add_outlined),
+                  label: const Text('Add Sub Category'),
+                  style: TextButton.styleFrom(foregroundColor: _primaryColor),
+                ),
+              ],
+            ),
+            if (_mainOptions.isEmpty && !isLoading && !snapshot.hasError)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'No RDS codes yet. Add one to enable the dropdown.',
+                  style: TextStyle(
+                    color: _secondaryText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _updateDocument(
@@ -347,7 +801,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     if (picked != null) {
       setState(() {
         _selectedExportRange = DateTimeRange(
-          start: DateTime(picked.start.year, picked.start.month, picked.start.day),
+          start: DateTime(
+            picked.start.year,
+            picked.start.month,
+            picked.start.day,
+          ),
           end: DateTime(picked.end.year, picked.end.month, picked.end.day),
         );
         _exportFilter = 'Custom Range';
@@ -431,52 +889,165 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     return '${DateFormat('MMM d, yyyy').format(activeRange.start)} - ${DateFormat('MMM d, yyyy').format(activeRange.end)}';
   }
 
-  Widget _buildEditableCell(
-    String docId,
-    String field,
-    String value, {
-    double width = 160,
-  }) {
+  Future<void> _showCellDialog({
+    required String title,
+    required String value,
+    String? docId,
+    String? field,
+    bool editable = false,
+  }) async {
     final controller = TextEditingController(text: value);
 
-    return SizedBox(
-      width: width,
-      child: TextField(
-        controller: controller,
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: _fieldFill,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 10,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: _effectiveBorder),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: _primaryColor, width: 1.5),
-          ),
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _isDark
+            ? const Color(0xFF161E27)
+            : const Color(0xFFFBF9F5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          title,
+          style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
         ),
-        style: TextStyle(
-          color: _primaryText,
-          fontSize: 13,
-          fontWeight: FontWeight.w500,
+        content: SizedBox(
+          width: 540,
+          child: editable
+              ? TextField(
+                  controller: controller,
+                  maxLines: 12,
+                  minLines: 6,
+                  decoration: _dialogInputDecoration(title),
+                  style: TextStyle(color: _primaryText),
+                )
+              : SingleChildScrollView(
+                  child: SelectableText(
+                    value.trim().isEmpty ? 'No content available.' : value,
+                    style: TextStyle(
+                      color: _primaryText,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
         ),
-        onSubmitted: (newValue) {
-          final trimmed = newValue.trim();
-          if (trimmed != value.trim() && trimmed.isNotEmpty) {
-            _updateDocument(docId, field, trimmed);
-          }
-        },
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close', style: TextStyle(color: _primaryColor)),
+          ),
+          if (editable && docId != null && field != null)
+            ElevatedButton(
+              onPressed: () async {
+                final trimmed = controller.text.trim();
+                if (trimmed.isEmpty || trimmed == value.trim()) {
+                  Navigator.pop(dialogContext);
+                  return;
+                }
+
+                await _updateDocument(docId, field, trimmed);
+                if (mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accentColor,
+                foregroundColor: Colors.black87,
+              ),
+              child: const Text('Save'),
+            ),
+        ],
       ),
     );
   }
 
-  Future<void> _pickPdf(void Function(void Function()) setDialogState) async {
-    final uploadInput = html.FileUploadInputElement()..accept = '.pdf';
+  Widget _buildEditableCell(
+    String docId,
+    String field,
+    String value, {
+    double width = 96,
+    String? label,
+  }) {
+    return _buildCellCard(
+      value,
+      width: width,
+      onTap: () => _showCellDialog(
+        title: label ?? field,
+        value: value,
+        docId: docId,
+        field: field,
+        editable: true,
+      ),
+      showEditIcon: true,
+    );
+  }
+
+  Widget _buildReadOnlyCell(
+    String value, {
+    required String label,
+    double width = 96,
+  }) {
+    return _buildCellCard(
+      value,
+      width: width,
+      onTap: () => _showCellDialog(title: label, value: value),
+    );
+  }
+
+  Widget _buildCellCard(
+    String value, {
+    required double width,
+    required VoidCallback onTap,
+    bool showEditIcon = false,
+  }) {
+    final displayValue = value.trim().isEmpty ? '-' : value;
+
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _softBackground,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _effectiveBorder),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    displayValue,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _primaryText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(
+                  showEditIcon ? Icons.open_in_full : Icons.visibility_outlined,
+                  size: 14,
+                  color: _secondaryText,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAttachment(
+    void Function(void Function()) setDialogState,
+  ) async {
+    final uploadInput = html.FileUploadInputElement()
+      ..accept = _allowedAttachmentTypes;
     uploadInput.click();
 
     await uploadInput.onChange.first;
@@ -495,43 +1066,81 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     });
   }
 
-  void _openPdf(String pdfUrl) {
-    if (pdfUrl.trim().isEmpty) {
+  void _openAttachment(String fileUrl) {
+    if (fileUrl.trim().isEmpty) {
       return;
     }
 
-    html.window.open(pdfUrl, '_blank');
+    html.window.open(fileUrl, '_blank');
   }
 
-  Future<void> _downloadPdf(
+  Future<void> _downloadAttachment(
     String docId,
-    String pdfUrl,
+    String fileUrl,
     String fileName,
   ) async {
-    if (pdfUrl.trim().isEmpty) {
+    if (fileUrl.trim().isEmpty) {
       return;
     }
 
     try {
-      await FirebaseFirestore.instance.collection('documents').doc(docId).update({
-        'hasBeenDownloaded': true,
-        'lastDownloadedAt': FieldValue.serverTimestamp(),
-      });
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(docId)
+          .update({
+            'hasBeenDownloaded': true,
+            'lastDownloadedAt': FieldValue.serverTimestamp(),
+          });
     } catch (_) {
       // Keep download available even if tracking update fails.
     }
 
-    final sanitizedFileName = fileName.trim().isNotEmpty
-        ? fileName.trim()
-        : 'document.pdf';
+    final sanitizedFileName =
+        fileName.trim().isNotEmpty ? fileName.trim() : 'document';
 
-    final anchor = html.AnchorElement(href: pdfUrl)
+    final anchor = html.AnchorElement(href: fileUrl)
       ..setAttribute('download', sanitizedFileName)
       ..style.display = 'none';
 
     html.document.body?.children.add(anchor);
     anchor.click();
     anchor.remove();
+  }
+
+  Future<void> _uploadAdminDocument(String docId) async {
+    final uploadInput = html.FileUploadInputElement()
+      ..accept = _allowedAttachmentTypes;
+    uploadInput.click();
+
+    await uploadInput.onChange.first;
+    final file = uploadInput.files?.first;
+    if (file == null) {
+      return;
+    }
+
+    final reader = html.FileReader();
+    reader.readAsDataUrl(file);
+    await reader.onLoad.first;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(docId)
+          .update({
+            'adminDocumentUrl': reader.result?.toString() ?? '',
+            'adminDocumentFileName': file.name,
+            'adminDocumentUpdatedAt': FieldValue.serverTimestamp(),
+          });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
   }
 
   InputDecoration _dialogInputDecoration(
@@ -626,46 +1235,29 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () async {
-                              await _pickDate(dialogContext);
-                              setDialogState(() {});
-                            },
-                            child: AbsorbPointer(
-                              child: TextFormField(
-                                controller: _dateReceivedController,
-                                decoration: _dialogInputDecoration(
-                                  'Date Received',
-                                  suffixIcon: const Icon(Icons.calendar_today),
-                                ),
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Please select a date';
-                                  }
-                                  return null;
-                                },
-                              ),
-                            ),
+                    GestureDetector(
+                      onTap: () async {
+                        await _pickDate(dialogContext);
+                        setDialogState(() {});
+                      },
+                      child: AbsorbPointer(
+                        child: TextFormField(
+                          controller: _dateReceivedController,
+                          decoration: _dialogInputDecoration(
+                            'Date Received',
+                            suffixIcon: const Icon(Icons.calendar_today),
                           ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Please select a date';
+                            }
+                            return null;
+                          },
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _rdsCodeController,
-                            decoration: _dialogInputDecoration('RDS Code'),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
+                    const SizedBox(height: 14),
+                    _buildRdsCodeDropdowns(setDialogState),
                     const SizedBox(height: 14),
                     Row(
                       children: [
@@ -718,14 +1310,14 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                             controller: _pdfNameController,
                             readOnly: true,
                             decoration: _dialogInputDecoration(
-                              'PDF Attachment',
-                              hintText: 'No PDF selected',
+                              'Attachment',
+                              hintText: 'No file selected',
                               suffixIcon: IconButton(
                                 onPressed: () async {
-                                  await _pickPdf(setDialogState);
+                                  await _pickAttachment(setDialogState);
                                 },
                                 icon: const Icon(Icons.upload_file_outlined),
-                                tooltip: 'Upload PDF',
+                                tooltip: 'Upload attachment',
                               ),
                             ),
                           ),
@@ -733,9 +1325,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         if (_selectedPdfDataUrl.isNotEmpty) ...[
                           const SizedBox(width: 12),
                           OutlinedButton.icon(
-                            onPressed: () => _openPdf(_selectedPdfDataUrl),
-                            icon: const Icon(Icons.picture_as_pdf_outlined),
-                            label: const Text('Preview'),
+                            onPressed: () =>
+                                _openAttachment(_selectedPdfDataUrl),
+                            icon: const Icon(Icons.attach_file_outlined),
+                            label: const Text('Open'),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: _primaryColor,
                               side: const BorderSide(color: _borderColor),
@@ -928,6 +1521,30 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 900;
+          const bannerText = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Super Admin Document Control Center',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  height: 1.15,
+                ),
+              ),
+              SizedBox(height: 10),
+              Text(
+                'Monitor incoming records, validate routing details, and maintain a clean official registry for the General Services Office.',
+                style: TextStyle(
+                  color: Color(0xFFF8EEDA),
+                  fontSize: 14,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          );
 
           return Flex(
             direction: compact ? Axis.vertical : Axis.horizontal,
@@ -951,31 +1568,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 ),
               ),
               SizedBox(width: compact ? 0 : 20, height: compact ? 16 : 0),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Super Admin Document Control Center',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                        height: 1.15,
-                      ),
-                    ),
-                    SizedBox(height: 10),
-                    Text(
-                      'Monitor incoming records, validate routing details, and maintain a clean official registry for the General Services Office.',
-                      style: TextStyle(
-                        color: Color(0xFFF8EEDA),
-                        fontSize: 14,
-                        height: 1.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              if (compact) bannerText else const Expanded(child: bannerText),
               SizedBox(width: compact ? 0 : 16, height: compact ? 20 : 0),
               Wrap(
                 spacing: 12,
@@ -1260,25 +1853,34 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 : Scrollbar(
                     controller: _tableVerticalController,
                     thumbVisibility: true,
-                    child: SingleChildScrollView(
-                      controller: _tableVerticalController,
-                      padding: const EdgeInsets.all(16),
-                      child: Scrollbar(
-                        controller: _tableHorizontalController,
-                        thumbVisibility: true,
-                        notificationPredicate: (notification) =>
-                            notification.depth == 1,
-                        child: SingleChildScrollView(
-                          controller: _tableHorizontalController,
-                          scrollDirection: Axis.horizontal,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(minWidth: 1640),
-                            child: DataTable(
-                              columnSpacing: 16,
-                              dataRowMinHeight: 74,
-                              dataRowMaxHeight: 90,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        const tableWidth = 1810.0;
+
+                        return SingleChildScrollView(
+                          controller: _tableVerticalController,
+                          padding: const EdgeInsets.all(16),
+                          child: Scrollbar(
+                            controller: _tableHorizontalController,
+                            thumbVisibility: true,
+                            notificationPredicate: (notification) =>
+                                notification.depth == 1,
+                            child: SingleChildScrollView(
+                              controller: _tableHorizontalController,
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: tableWidth,
+                                child: DataTable(
+                              columnSpacing: 12,
+                              dataRowMinHeight: 68,
+                              dataRowMaxHeight: 84,
                               headingRowHeight: 58,
                               dividerThickness: 0.6,
+                              headingTextStyle: TextStyle(
+                                color: _primaryText,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
                               headingRowColor: WidgetStateProperty.all(
                                 _tableHeaderBackground,
                               ),
@@ -1287,7 +1889,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                   color: _effectiveBorder,
                                 ),
                               ),
-                              columns: const [
+                              columns: [
                                 DataColumn(label: Text('Date Received')),
                                 DataColumn(label: Text('RDS Code')),
                                 DataColumn(label: Text('Control Number')),
@@ -1300,7 +1902,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                 DataColumn(label: Text('Action Taken')),
                                 DataColumn(label: Text('Document')),
                                 DataColumn(label: Text('Remarks')),
-                                DataColumn(label: Text('Actions')),
+                                DataColumn(label: Text('Delete')),
                               ],
                               rows: docs.map((doc) {
                                 final data = doc.data();
@@ -1311,7 +1913,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'dateReceived',
                                         _formatDate(_extractTimestamp(data)),
-                                        width: 140,
+                                        width: 120,
                                       ),
                                     ),
                                     DataCell(
@@ -1319,7 +1921,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'rdsCode',
                                         (data['rdsCode'] ?? '').toString(),
-                                        width: 120,
+                                        width: 104,
                                       ),
                                     ),
                                     DataCell(
@@ -1328,7 +1930,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         'controlNumber',
                                         (data['controlNumber'] ?? '')
                                             .toString(),
-                                        width: 120,
+                                        width: 100,
                                       ),
                                     ),
                                     DataCell(
@@ -1336,7 +1938,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'office',
                                         (data['office'] ?? '').toString(),
-                                        width: 150,
+                                        width: 130,
                                       ),
                                     ),
                                     DataCell(
@@ -1344,12 +1946,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'particular',
                                         (data['particular'] ?? '').toString(),
-                                        width: 220,
+                                        width: 170,
                                       ),
                                     ),
                                     DataCell(
                                       SizedBox(
-                                        width: 180,
+                                        width: 150,
                                         child: Builder(
                                           builder: (context) {
                                             final hasBeenDownloaded =
@@ -1375,16 +1977,16 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                                   )
                                                 : TextButton.icon(
                                                     onPressed: () async =>
-                                                        _downloadPdf(
-                                                      doc.id,
-                                                      (data['scannedFileUrl'] ??
-                                                              '')
-                                                          .toString(),
-                                                      (data['pdfFileName'] ?? '')
-                                                          .toString(),
-                                                    ),
-                                                    style:
-                                                        TextButton.styleFrom(
+                                                        _downloadAttachment(
+                                                          doc.id,
+                                                          (data['scannedFileUrl'] ??
+                                                                  '')
+                                                              .toString(),
+                                                          (data['pdfFileName'] ??
+                                                                  '')
+                                                              .toString(),
+                                                        ),
+                                                    style: TextButton.styleFrom(
                                                       foregroundColor:
                                                           downloadLabelColor,
                                                     ),
@@ -1392,8 +1994,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                                       Icons
                                                           .download_for_offline_outlined,
                                                       size: 18,
-                                                      color:
-                                                          downloadLabelColor,
+                                                      color: downloadLabelColor,
                                                     ),
                                                     label: SizedBox(
                                                       width: 120,
@@ -1406,7 +2007,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                                             ? (data['pdfFileName'] ??
                                                                       '')
                                                                   .toString()
-                                                            : 'Download PDF',
+                                                            : 'Download File',
                                                         maxLines: 1,
                                                         overflow: TextOverflow
                                                             .ellipsis,
@@ -1426,7 +2027,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'forwardedTo',
                                         (data['forwardedTo'] ?? '').toString(),
-                                        width: 140,
+                                        width: 120,
                                       ),
                                     ),
                                     DataCell(
@@ -1434,7 +2035,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'receivedBy',
                                         (data['receivedBy'] ?? '').toString(),
-                                        width: 150,
+                                        width: 130,
                                       ),
                                     ),
                                     DataCell(
@@ -1442,7 +2043,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'comment',
                                         (data['comment'] ?? '').toString(),
-                                        width: 180,
+                                        width: 132,
                                       ),
                                     ),
                                     DataCell(
@@ -1450,12 +2051,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'actionTaken',
                                         (data['actionTaken'] ?? '').toString(),
-                                        width: 180,
+                                        width: 132,
                                       ),
                                     ),
                                     DataCell(
                                       SizedBox(
-                                        width: 180,
+                                        width: 128,
                                         child:
                                             (data['adminDocumentUrl'] ?? '')
                                                 .toString()
@@ -1469,7 +2070,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                                 ),
                                               )
                                             : TextButton.icon(
-                                                onPressed: () => _downloadPdf(
+                                                onPressed: () =>
+                                                    _downloadAttachment(
                                                   doc.id,
                                                   (data['adminDocumentUrl'] ??
                                                           '')
@@ -1508,31 +2110,45 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'remarks',
                                         (data['remarks'] ?? '').toString(),
-                                        width: 180,
+                                        width: 128,
                                       ),
                                     ),
                                     DataCell(
-                                      IconButton(
-                                        onPressed: () =>
-                                            _showDeleteDialog(doc.id),
-                                        icon: const Icon(
-                                          Icons.delete_outline,
-                                          color: Colors.red,
+                                      SizedBox(
+                                        width: 56,
+                                        child: Center(
+                                          child: IconButton(
+                                            onPressed: () =>
+                                                _showDeleteDialog(doc.id),
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                              color: Colors.red,
+                                            ),
+                                            iconSize: 20,
+                                            splashRadius: 20,
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 36,
+                                              minHeight: 36,
+                                            ),
+                                            tooltip: 'Delete document',
+                                          ),
                                         ),
-                                        tooltip: 'Delete document',
                                       ),
                                     ),
                                   ],
                                 );
                               }).toList(),
+                                    ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
                   ),
-          ),
-        ],
+        ),
+      ],
       ),
     );
   }
@@ -1631,7 +2247,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                 child: _DashboardStatCard(
                                   title: 'With Attachment',
                                   value: '${_countWithAttachments(allDocs)}',
-                                  subtitle: 'PDF documents available',
+                                  subtitle: 'Files ready to download',
                                   icon: Icons.attach_file_outlined,
                                   highlightColor: const Color(0xFF295C88),
                                   darkMode: _isDark,
@@ -1640,9 +2256,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                               SizedBox(
                                 width: statCardWidth,
                                 child: _DashboardStatCard(
-                                  title: 'Action Taken',
-                                  value:
-                                      '${_countWithoutActionTaken(allDocs)}',
+                                  title: 'Without Action Taken',
+                                  value: '${_countWithoutActionTaken(allDocs)}',
                                   subtitle: 'Registry without action taken',
                                   icon: Icons.pending_actions_outlined,
                                   highlightColor: _successColor,

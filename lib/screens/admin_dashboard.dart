@@ -12,6 +12,7 @@ class AdminDashboard extends StatefulWidget {
 }
 
 class _AdminDashboardState extends State<AdminDashboard> {
+  static const String _allowedAttachmentTypes = '.pdf,.doc,.docx,.xls,.xlsx';
   static const Color _primaryColor = Color(0xFF7B1E1E);
   static const Color _accentColor = Color(0xFFD6B25E);
   static const Color _surfaceTint = Color(0xFFF4EFE8);
@@ -236,12 +237,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
     });
   }
 
-  Future<void> _downloadPdf(
+  Future<void> _downloadAttachment(
     String docId,
-    String pdfUrl,
+    String fileUrl,
     String fileName,
   ) async {
-    if (pdfUrl.trim().isEmpty) {
+    if (fileUrl.trim().isEmpty) {
       return;
     }
 
@@ -256,9 +257,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
     final sanitizedFileName = fileName.trim().isNotEmpty
         ? fileName.trim()
-        : 'document.pdf';
+        : 'document';
 
-    final anchor = html.AnchorElement(href: pdfUrl)
+    final anchor = html.AnchorElement(href: fileUrl)
       ..setAttribute('download', sanitizedFileName)
       ..style.display = 'none';
 
@@ -268,7 +269,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<void> _uploadAdminDocument(String docId) async {
-    final uploadInput = html.FileUploadInputElement();
+    final uploadInput = html.FileUploadInputElement()
+      ..accept = _allowedAttachmentTypes;
     uploadInput.click();
 
     await uploadInput.onChange.first;
@@ -299,54 +301,161 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
-  Widget _buildEditableCell(
-    String docId,
-    String field,
-    String value, {
-    bool readOnly = false,
-  }) {
+  Future<void> _showCellDialog({
+    required String title,
+    required String value,
+    String? docId,
+    String? field,
+    bool editable = false,
+  }) async {
     final controller = TextEditingController(text: value);
 
-    return SizedBox(
-      width: 170,
-      child: TextField(
-        controller: controller,
-        readOnly: readOnly,
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: _fieldFill,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 10,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: _effectiveBorder),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: _primaryColor, width: 1.5),
-          ),
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _isDark
+            ? const Color(0xFF161E27)
+            : const Color(0xFFFBF9F5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          title,
+          style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
         ),
-        style: TextStyle(
-          color: _primaryText,
-          fontSize: 13,
-          fontWeight: FontWeight.w500,
+        content: SizedBox(
+          width: 520,
+          child: editable
+              ? TextField(
+                  controller: controller,
+                  maxLines: 10,
+                  minLines: 6,
+                  decoration: _dialogInputDecoration(title),
+                  style: TextStyle(color: _primaryText),
+                )
+              : SingleChildScrollView(
+                  child: SelectableText(
+                    value.trim().isEmpty ? 'No content available.' : value,
+                    style: TextStyle(
+                      color: _primaryText,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
         ),
-        onSubmitted: (newValue) {
-          if (newValue != value && newValue.isNotEmpty) {
-            _updateDocument(docId, field, newValue);
-          }
-        },
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close', style: TextStyle(color: _primaryColor)),
+          ),
+          if (editable && docId != null && field != null)
+            ElevatedButton(
+              onPressed: () async {
+                final trimmed = controller.text.trim();
+                if (trimmed.isEmpty || trimmed == value.trim()) {
+                  Navigator.pop(dialogContext);
+                  return;
+                }
+
+                await _updateDocument(docId, field, trimmed);
+                if (mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accentColor,
+                foregroundColor: Colors.black87,
+              ),
+              child: const Text('Save'),
+            ),
+        ],
       ),
     );
   }
 
-  InputDecoration _dialogInputDecoration(
-    String label, {
-    Widget? suffixIcon,
+  Widget _buildEditableCell(
+    String docId,
+    String field,
+    String value, {
+    double width = 110,
+    String? label,
   }) {
+    return _buildCellCard(
+      value,
+      width: width,
+      onTap: () => _showCellDialog(
+        title: label ?? field,
+        value: value,
+        docId: docId,
+        field: field,
+        editable: true,
+      ),
+      showEditIcon: true,
+    );
+  }
+
+  Widget _buildReadOnlyCell(
+    String value, {
+    required String label,
+    double width = 96,
+  }) {
+    return _buildCellCard(
+      value,
+      width: width,
+      onTap: () => _showCellDialog(title: label, value: value),
+    );
+  }
+
+  Widget _buildCellCard(
+    String value, {
+    required double width,
+    required VoidCallback onTap,
+    bool showEditIcon = false,
+  }) {
+    final displayValue = value.trim().isEmpty ? '-' : value;
+
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _softBackground,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _effectiveBorder),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    displayValue,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _primaryText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(
+                  showEditIcon ? Icons.open_in_full : Icons.visibility_outlined,
+                  size: 14,
+                  color: _secondaryText,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _dialogInputDecoration(String label, {Widget? suffixIcon}) {
     return InputDecoration(
       labelText: label,
       suffixIcon: suffixIcon,
@@ -402,10 +511,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 color: _surfaceTint,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(
-                Icons.note_add_outlined,
-                color: _primaryColor,
-              ),
+              child: const Icon(Icons.note_add_outlined, color: _primaryColor),
             ),
             const SizedBox(width: 12),
             Text(
@@ -555,121 +661,123 @@ class _AdminDashboardState extends State<AdminDashboard> {
       backgroundColor: _pageBackground,
       body: SafeArea(
         child: LayoutBuilder(
-          builder: (context, viewportConstraints) => StreamBuilder<
-              QuerySnapshot<Map<String, dynamic>>>(
-            stream: _firestore
-                .collection('documents')
-                .orderBy('controlNumber')
-                .snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
+          builder: (context, viewportConstraints) =>
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: _firestore
+                    .collection('documents')
+                    .orderBy('controlNumber')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-              if (snapshot.hasError) {
-                return Center(
-                  child: Padding(
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          'Error loading documents: ${snapshot.error}',
+                          style: TextStyle(color: _primaryText),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final query = _searchText.trim().toLowerCase();
+                  final allDocs = snapshot.data?.docs ?? [];
+                  final docs = allDocs.where((doc) {
+                    if (query.isEmpty) return true;
+                    final data = doc.data();
+                    final searchableValues = [
+                      _formatDate(_extractTimestamp(data)),
+                      (data['rdsCode'] ?? '').toString(),
+                      (data['controlNumber'] ?? '').toString(),
+                      (data['office'] ?? '').toString(),
+                      (data['particular'] ?? '').toString(),
+                      (data['pdfFileName'] ?? '').toString(),
+                      (data['receivedBy'] ?? '').toString(),
+                      (data['forwardedTo'] ?? '').toString(),
+                      (data['comment'] ?? '').toString(),
+                      (data['actionTaken'] ?? '').toString(),
+                      (data['adminDocumentFileName'] ?? '').toString(),
+                      (data['remarks'] ?? '').toString(),
+                      (data['scannedFileUrl'] ?? '').toString(),
+                    ].map((value) => value.toLowerCase());
+                    return searchableValues.any(
+                      (value) => value.contains(query),
+                    );
+                  }).toList();
+
+                  final contentWidth = viewportConstraints.maxWidth - 48;
+                  final statCardWidth = contentWidth >= 1360
+                      ? (contentWidth - 16 * 2) / 3
+                      : contentWidth >= 920
+                      ? (contentWidth - 16) / 2
+                      : contentWidth;
+
+                  return SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'Error loading documents: ${snapshot.error}',
-                      style: TextStyle(color: _primaryText),
-                    ),
-                  ),
-                );
-              }
-
-              final query = _searchText.trim().toLowerCase();
-              final allDocs = snapshot.data?.docs ?? [];
-              final docs = allDocs.where((doc) {
-                if (query.isEmpty) return true;
-                final data = doc.data();
-                final searchableValues = [
-                  _formatDate(_extractTimestamp(data)),
-                  (data['rdsCode'] ?? '').toString(),
-                  (data['controlNumber'] ?? '').toString(),
-                  (data['office'] ?? '').toString(),
-                  (data['particular'] ?? '').toString(),
-                  (data['pdfFileName'] ?? '').toString(),
-                  (data['receivedBy'] ?? '').toString(),
-                  (data['forwardedTo'] ?? '').toString(),
-                  (data['comment'] ?? '').toString(),
-                  (data['actionTaken'] ?? '').toString(),
-                  (data['adminDocumentFileName'] ?? '').toString(),
-                  (data['remarks'] ?? '').toString(),
-                  (data['scannedFileUrl'] ?? '').toString(),
-                ].map((value) => value.toLowerCase());
-                return searchableValues.any((value) => value.contains(query));
-              }).toList();
-
-              final contentWidth = viewportConstraints.maxWidth - 48;
-              final statCardWidth = contentWidth >= 1360
-                  ? (contentWidth - 16 * 2) / 3
-                  : contentWidth >= 920
-                  ? (contentWidth - 16) / 2
-                  : contentWidth;
-
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: viewportConstraints.maxHeight - 48,
-                  ),
-                  child: Column(
-                    children: [
-                      _buildTopBanner(context),
-                      const SizedBox(height: 20),
-                      Wrap(
-                        spacing: 16,
-                        runSpacing: 16,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: viewportConstraints.maxHeight - 48,
+                      ),
+                      child: Column(
                         children: [
-                          SizedBox(
-                            width: statCardWidth,
-                            child: _DashboardStatCard(
-                              title: 'Total Registry',
-                              value: '${allDocs.length}',
-                              subtitle: 'All encoded documents',
-                              icon: Icons.inventory_2_outlined,
-                              highlightColor: _primaryColor,
-                              darkMode: _isDark,
-                            ),
+                          _buildTopBanner(context),
+                          const SizedBox(height: 20),
+                          Wrap(
+                            spacing: 16,
+                            runSpacing: 16,
+                            children: [
+                              SizedBox(
+                                width: statCardWidth,
+                                child: _DashboardStatCard(
+                                  title: 'Total Registry',
+                                  value: '${allDocs.length}',
+                                  subtitle: 'All encoded documents',
+                                  icon: Icons.inventory_2_outlined,
+                                  highlightColor: _primaryColor,
+                                  darkMode: _isDark,
+                                ),
+                              ),
+                              SizedBox(
+                                width: statCardWidth,
+                                child: _DashboardStatCard(
+                                  title: 'With Attachment',
+                                  value: '${_countWithAttachments(allDocs)}',
+                                  subtitle: 'PDF documents available',
+                                  icon: Icons.attach_file_outlined,
+                                  highlightColor: const Color(0xFF295C88),
+                                  darkMode: _isDark,
+                                ),
+                              ),
+                              SizedBox(
+                                width: statCardWidth,
+                                child: _DashboardStatCard(
+                                  title: 'Action Taken',
+                                  value: '${_countWithoutActionTaken(allDocs)}',
+                                  subtitle: 'Registry without action taken',
+                                  icon: Icons.pending_actions_outlined,
+                                  highlightColor: _successColor,
+                                  darkMode: _isDark,
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 20),
+                          _buildToolbar(context),
+                          const SizedBox(height: 20),
                           SizedBox(
-                            width: statCardWidth,
-                            child: _DashboardStatCard(
-                              title: 'With Attachment',
-                              value: '${_countWithAttachments(allDocs)}',
-                              subtitle: 'PDF documents available',
-                              icon: Icons.attach_file_outlined,
-                              highlightColor: const Color(0xFF295C88),
-                              darkMode: _isDark,
-                            ),
-                          ),
-                          SizedBox(
-                            width: statCardWidth,
-                            child: _DashboardStatCard(
-                              title: 'Action Taken',
-                              value: '${_countWithoutActionTaken(allDocs)}',
-                              subtitle: 'Registry without action taken',
-                              icon: Icons.pending_actions_outlined,
-                              highlightColor: _successColor,
-                              darkMode: _isDark,
-                            ),
+                            height: 560,
+                            child: _buildDataSection(context, docs),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 20),
-                      _buildToolbar(context),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        height: 560,
-                        child: _buildDataSection(context, docs),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+                    ),
+                  );
+                },
+              ),
         ),
       ),
     );
@@ -724,15 +832,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _BannerPill(icon: Icons.admin_panel_settings_outlined, label: 'GSO Admin'),
-              _BannerPill(icon: Icons.monitor_heart_outlined, label: _isDark ? 'Dark Mode' : 'Light Mode'),
+              _BannerPill(
+                icon: Icons.admin_panel_settings_outlined,
+                label: 'GSO Admin',
+              ),
+              _BannerPill(
+                icon: Icons.monitor_heart_outlined,
+                label: _isDark ? 'Dark Mode' : 'Light Mode',
+              ),
               IconButton(
                 onPressed: _toggleTheme,
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.white.withOpacity(0.12),
                   foregroundColor: const Color(0xFFF8EEDA),
                 ),
-                icon: Icon(_isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
+                icon: Icon(
+                  _isDark
+                      ? Icons.light_mode_outlined
+                      : Icons.dark_mode_outlined,
+                ),
                 tooltip: 'Toggle theme',
               ),
               IconButton(
@@ -776,7 +894,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search by date, office, control no., person, or action',
+                hintText:
+                    'Search by date, office, control no., person, or action',
                 prefixIcon: const Icon(Icons.search, color: _primaryColor),
                 filled: true,
                 fillColor: _softBackground,
@@ -854,7 +973,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: _isDark ? const Color(0xFF24303D) : _surfaceTint,
                     borderRadius: BorderRadius.circular(999),
@@ -890,10 +1012,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     scrollDirection: Axis.horizontal,
                     child: SingleChildScrollView(
                       child: DataTable(
-                        dataRowMinHeight: 74,
-                        dataRowMaxHeight: 90,
-                        columnSpacing: 18,
-                        headingRowHeight: 58,
+                        dataRowMinHeight: 60,
+                        dataRowMaxHeight: 68,
+                        columnSpacing: 10,
+                        horizontalMargin: 8,
+                        headingRowHeight: 50,
                         dividerThickness: 0.6,
                         headingRowColor: WidgetStateProperty.all(
                           _tableHeaderBackground,
@@ -914,132 +1037,82 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           DataColumn(label: Text('Action Taken')),
                           DataColumn(label: Text('Document')),
                           DataColumn(label: Text('Remarks')),
-                          DataColumn(label: Text('Actions')),
                         ],
                         rows: docs.map((doc) {
                           final data = doc.data();
                           return DataRow(
                             cells: [
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'dateReceived',
+                                _buildReadOnlyCell(
                                   _formatDate(_extractTimestamp(data)),
+                                  label: 'Date Received',
+                                  width: 88,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'rdsCode',
+                                _buildReadOnlyCell(
                                   (data['rdsCode'] ?? '').toString(),
+                                  label: 'RDS Code',
+                                  width: 92,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'controlNumber',
+                                _buildReadOnlyCell(
                                   (data['controlNumber'] ?? '').toString(),
+                                  label: 'Control Number',
+                                  width: 82,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'office',
+                                _buildReadOnlyCell(
                                   (data['office'] ?? '').toString(),
+                                  label: 'Office',
+                                  width: 90,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'particular',
+                                _buildReadOnlyCell(
                                   (data['particular'] ?? '').toString(),
+                                  label: 'Particular',
+                                  width: 112,
                                 ),
                               ),
                               DataCell(
-                                SizedBox(
-                                  width: 180,
-                                  child: Builder(
-                                    builder: (context) {
-                                      final hasBeenDownloaded =
-                                          data['hasBeenDownloaded'] == true;
-                                      final downloadLabelColor =
-                                          hasBeenDownloaded
-                                          ? Colors.blue.shade700
-                                          : null;
-
-                                      return (data['scannedFileUrl'] ?? '')
+                                _buildReadOnlyCell(
+                                  ((data['pdfFileName'] ?? '')
                                               .toString()
-                                              .trim()
-                                              .isEmpty
-                                          ? Text(
-                                              'No attachment',
-                                              style: TextStyle(
-                                                color: _secondaryText,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            )
-                                          : TextButton.icon(
-                                              onPressed: () => _downloadPdf(
-                                                doc.id,
-                                                (data['scannedFileUrl'] ?? '')
-                                                    .toString(),
-                                                (data['pdfFileName'] ?? '')
-                                                    .toString(),
-                                              ),
-                                              style: TextButton.styleFrom(
-                                                foregroundColor:
-                                                    downloadLabelColor,
-                                              ),
-                                              icon: Icon(
-                                                Icons
-                                                    .download_for_offline_outlined,
-                                                size: 18,
-                                                color: downloadLabelColor,
-                                              ),
-                                              label: SizedBox(
-                                                width: 120,
-                                                child: Text(
-                                                  ((data['pdfFileName'] ?? '')
-                                                                  .toString()
-                                                                  .trim())
-                                                          .isNotEmpty
-                                                      ? (data['pdfFileName'] ??
-                                                                '')
-                                                            .toString()
-                                                      : 'Download PDF',
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    color:
-                                                        downloadLabelColor,
-                                                  ),
-                                                ),
-                                              ),
-                                            );
-                                    },
-                                  ),
+                                              .trim())
+                                          .isNotEmpty
+                                      ? (data['pdfFileName'] ?? '').toString()
+                                      : (data['scannedFileUrl'] ?? '')
+                                            .toString()
+                                            .trim()
+                                            .isNotEmpty
+                                      ? 'PDF attached'
+                                      : 'No attachment',
+                                  label: 'Received Document',
+                                  width: 108,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'forwardedTo',
+                                _buildReadOnlyCell(
                                   (data['forwardedTo'] ?? '').toString(),
+                                  label: 'Forwarded To',
+                                  width: 88,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'receivedBy',
+                                _buildReadOnlyCell(
                                   (data['receivedBy'] ?? '').toString(),
+                                  label: 'Received By',
+                                  width: 94,
                                 ),
                               ),
                               DataCell(
-                                _buildEditableCell(
-                                  doc.id,
-                                  'comment',
+                                _buildReadOnlyCell(
                                   (data['comment'] ?? '').toString(),
+                                  label: 'Comment',
+                                  width: 104,
                                 ),
                               ),
                               DataCell(
@@ -1047,27 +1120,38 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   doc.id,
                                   'actionTaken',
                                   (data['actionTaken'] ?? '').toString(),
+                                  label: 'Action Taken',
+                                  width: 104,
                                 ),
                               ),
                               DataCell(
                                 SizedBox(
-                                  width: 190,
+                                  width: 130,
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
                                       TextButton.icon(
+                                        style: TextButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 0,
+                                          ),
+                                          minimumSize: const Size(0, 32),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
                                         onPressed: () =>
                                             _uploadAdminDocument(doc.id),
                                         icon: const Icon(
                                           Icons.upload_file_outlined,
-                                          size: 18,
+                                          size: 16,
                                         ),
                                         label: Text(
                                           ((data['adminDocumentFileName'] ?? '')
-                                                          .toString()
-                                                          .trim())
+                                                      .toString()
+                                                      .trim())
                                                   .isNotEmpty
                                               ? (data['adminDocumentFileName'] ??
                                                         '')
@@ -1075,6 +1159,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                               : 'Upload Attachment',
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 12),
                                         ),
                                       ),
                                       if ((data['adminDocumentUrl'] ?? '')
@@ -1082,7 +1167,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                           .trim()
                                           .isNotEmpty)
                                         TextButton(
-                                          onPressed: () => _downloadPdf(
+                                          style: TextButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 0,
+                                            ),
+                                            minimumSize: const Size(0, 30),
+                                            tapTargetSize: MaterialTapTargetSize
+                                                .shrinkWrap,
+                                          ),
+                                          onPressed: () => _downloadAttachment(
                                             doc.id,
                                             (data['adminDocumentUrl'] ?? '')
                                                 .toString(),
@@ -1090,7 +1184,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                     '')
                                                 .toString(),
                                           ),
-                                          child: const Text('Download File'),
+                                          child: const Text(
+                                            'Download',
+                                            style: TextStyle(fontSize: 12),
+                                          ),
                                         ),
                                     ],
                                   ),
@@ -1101,16 +1198,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   doc.id,
                                   'remarks',
                                   (data['remarks'] ?? '').toString(),
-                                ),
-                              ),
-                              DataCell(
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete_outline,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () => _showDeleteDialog(doc.id),
-                                  tooltip: 'Delete document',
+                                  label: 'Remarks',
+                                  width: 104,
                                 ),
                               ),
                             ],
