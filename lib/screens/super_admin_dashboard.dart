@@ -23,6 +23,13 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     'Asset',
     'Records',
   ];
+  static final List<String> _retentionPeriodOptions = [
+    ...List<String>.generate(
+      20,
+      (index) => '${index + 1} year${index == 0 ? '' : 's'}',
+    ),
+    'Permanent',
+  ];
 
   static const Color _primaryColor = Color(0xFF7B1E1E);
   static const Color _accentColor = Color(0xFFD6B25E);
@@ -30,10 +37,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   static const Color _borderColor = Color(0xFFD8CEC0);
   static const Color _textMuted = Color(0xFF5F6B76);
   static const Color _successColor = Color(0xFF2E6A4F);
+  static const Color _warningColor = Color(0xFFC67A12);
+  static const Color _dangerColor = Color(0xFFB42318);
 
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _dateReceivedController = TextEditingController();
-  final TextEditingController _rdsCodeController = TextEditingController();
+  final TextEditingController _filingCodeController = TextEditingController();
   final TextEditingController _controlNumberController =
       TextEditingController();
   final TextEditingController _officeController = TextEditingController();
@@ -43,6 +52,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   final TextEditingController _commentController = TextEditingController();
   final TextEditingController _actionTakenController = TextEditingController();
   final TextEditingController _remarksController = TextEditingController();
+  final TextEditingController _fileLocationAfterRetentionController =
+      TextEditingController();
   final ScrollController _tableHorizontalController = ScrollController();
   final ScrollController _tableVerticalController = ScrollController();
 
@@ -51,12 +62,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   String _searchText = '';
   String _exportFilter = 'Week';
   String? _selectedForwardedTo;
-  String? _selectedMain;
-  String? _selectedSub;
+  String? _selectedFilingCode;
+  String? _selectedRetentionPeriod;
   String _selectedPdfDataUrl = '';
-  List<String> _mainOptions = [];
-  List<String> _subOptions = [];
+  List<String> _filingCodeOptions = [];
   DateTime? _selectedDateReceived;
+  bool _isConfidential = false;
   DateTimeRange _selectedExportRange = DateTimeRange(
     start: DateTime.now().subtract(Duration(days: DateTime.now().weekday - 1)),
     end: DateTime.now().add(
@@ -90,7 +101,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   void dispose() {
     _searchController.dispose();
     _dateReceivedController.dispose();
-    _rdsCodeController.dispose();
+    _filingCodeController.dispose();
     _controlNumberController.dispose();
     _officeController.dispose();
     _particularController.dispose();
@@ -99,6 +110,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     _commentController.dispose();
     _actionTakenController.dispose();
     _remarksController.dispose();
+    _fileLocationAfterRetentionController.dispose();
     _tableHorizontalController.dispose();
     _tableVerticalController.dispose();
     super.dispose();
@@ -150,37 +162,180 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     return timestamp.toString();
   }
 
+  int? _retentionYears(String retentionPeriod) {
+    final normalized = retentionPeriod.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'permanent') {
+      return null;
+    }
+
+    return int.tryParse(normalized.split(' ').first);
+  }
+
+  DateTime _addYears(DateTime date, int years) {
+    final targetYear = date.year + years;
+    final lastDayOfTargetMonth = DateTime(targetYear, date.month + 1, 0).day;
+    final adjustedDay = date.day <= lastDayOfTargetMonth
+        ? date.day
+        : lastDayOfTargetMonth;
+
+    return DateTime(targetYear, date.month, adjustedDay);
+  }
+
+  DateTime? _calculateDispositionDate(
+    DateTime? dateReceived,
+    String retentionPeriod,
+  ) {
+    if (dateReceived == null) {
+      return null;
+    }
+
+    final years = _retentionYears(retentionPeriod);
+    if (years == null) {
+      return null;
+    }
+
+    return _addYears(dateReceived, years);
+  }
+
+  String _retentionPeriodFromData(Map<String, dynamic> data) {
+    return (data['retentionPeriod'] ?? data['rdsSub'] ?? '').toString();
+  }
+
+  String _filingCodeFromData(Map<String, dynamic> data) {
+    final filingCode = (data['filingCode'] ?? '').toString().trim();
+    if (filingCode.isNotEmpty) {
+      return filingCode;
+    }
+
+    final legacyMain = (data['rdsMain'] ?? '').toString().trim();
+    if (legacyMain.isNotEmpty) {
+      return legacyMain;
+    }
+
+    final legacyCode = (data['rdsCode'] ?? '').toString().trim();
+    if (!legacyCode.contains(' - ')) {
+      return legacyCode;
+    }
+
+    return legacyCode.split(' - ').first.trim();
+  }
+
+  String _dispositionDateFromData(Map<String, dynamic> data) {
+    final storedDisposition = data['dispositionDate'];
+    if (storedDisposition is Timestamp) {
+      return _formatDate(storedDisposition);
+    }
+    if (storedDisposition is DateTime) {
+      return _formatDate(storedDisposition);
+    }
+    if (storedDisposition is String && storedDisposition.trim().isNotEmpty) {
+      return storedDisposition;
+    }
+
+    final retentionPeriod = _retentionPeriodFromData(data);
+    if (retentionPeriod.trim().toLowerCase() == 'permanent') {
+      return 'Permanent';
+    }
+
+    final dateReceived = _extractTimestamp(data)?.toDate();
+    final dispositionDate = _calculateDispositionDate(
+      dateReceived,
+      retentionPeriod,
+    );
+
+    return dispositionDate == null ? '' : _formatDate(dispositionDate);
+  }
+
+  String _fileLocationFromData(Map<String, dynamic> data) {
+    return (data['fileLocation'] ??
+            data['fileLocationAfterRetention'] ??
+            data['retentionFileLocation'] ??
+            data['fileLocationAfterRetentionPeriod'] ??
+            '')
+        .toString();
+  }
+
+  bool _isConfidentialFromData(Map<String, dynamic> data) {
+    return data['isConfidential'] == true || data['confidential'] == true;
+  }
+
+  String _statusFromData(Map<String, dynamic> data) {
+    final status = (data['status'] ?? 'pending').toString().trim();
+    return status.isEmpty ? 'pending' : status.toLowerCase();
+  }
+
+  Color _statusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+        return _successColor;
+      case 'rejected':
+        return _dangerColor;
+      case 'pending':
+      default:
+        return _warningColor;
+    }
+  }
+
+  String _statusLabel(String status) {
+    if (status.trim().isEmpty) {
+      return 'Pending';
+    }
+
+    final normalized = status.toLowerCase();
+    return normalized[0].toUpperCase() + normalized.substring(1);
+  }
+
+  String? _nullableString(String value) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
   Future<void> _addDocument() async {
-    if (!(_formKey.currentState?.validate() ?? false) ||
-        _selectedDateReceived == null ||
-        _selectedMain == null ||
-        _selectedSub == null) {
+    if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
 
-    final rdsMain = _selectedMain!.trim();
-    final rdsSub = _selectedSub!.trim();
-    final rdsCode = '$rdsMain - $rdsSub';
+    final filingCode = _selectedFilingCode?.trim() ?? '';
+    final retentionPeriod = _selectedRetentionPeriod?.trim() ?? '';
+    final dispositionDate = _calculateDispositionDate(
+      _selectedDateReceived,
+      retentionPeriod,
+    );
+    final receivedTimestamp = _selectedDateReceived == null
+        ? null
+        : Timestamp.fromDate(_selectedDateReceived!);
 
     try {
       await FirebaseFirestore.instance.collection('documents').add({
-        'dateReceived': Timestamp.fromDate(_selectedDateReceived!),
-        'rdsMain': rdsMain,
-        'rdsSub': rdsSub,
-        'rdsCode': rdsCode,
-        'controlNumber': _controlNumberController.text.trim(),
-        'office': _officeController.text.trim(),
-        'particular': _particularController.text.trim(),
-        'scannedFileUrl': _selectedPdfDataUrl,
-        'pdfFileName': _pdfNameController.text.trim(),
-        'forwardedTo': _selectedForwardedTo ?? '',
-        'receivedBy': _receivedByController.text.trim(),
-        'comment': _commentController.text.trim(),
-        'actionTaken': _actionTakenController.text.trim(),
-        'remarks': _remarksController.text.trim(),
-        'adminDocumentUrl': '',
-        'adminDocumentFileName': '',
+        'dateReceived': receivedTimestamp,
+        'date': receivedTimestamp,
+        'filingCode': _nullableString(filingCode),
+        'retentionPeriod': _nullableString(retentionPeriod),
+        'dispositionDate': retentionPeriod.toLowerCase() == 'permanent'
+            ? 'Permanent'
+            : dispositionDate != null
+            ? Timestamp.fromDate(dispositionDate)
+            : null,
+        'controlNumber': _nullableString(_controlNumberController.text),
+        'office': _nullableString(_officeController.text),
+        'particular': _nullableString(_particularController.text),
+        'scannedFileUrl': _nullableString(_selectedPdfDataUrl),
+        'pdfFileName': _nullableString(_pdfNameController.text),
+        'forwardedTo': _nullableString(_selectedForwardedTo ?? ''),
+        'receivedBy': _nullableString(_receivedByController.text),
+        'comment': _nullableString(_commentController.text),
+        'actionTaken': _nullableString(_actionTakenController.text),
+        'remarks': _nullableString(_remarksController.text),
+        'fileLocation': _nullableString(
+          _fileLocationAfterRetentionController.text,
+        ),
+        'adminDocumentUrl': null,
+        'adminDocumentFileName': null,
         'hasBeenDownloaded': false,
+        'isConfidential': _isConfidential,
+        'status': 'pending',
+        'submittedBy': 'Super Admin',
+        'submittedAt': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -190,7 +345,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Document added successfully.'),
+            content: Text(
+              'Document submitted successfully and is pending supervisor approval.',
+            ),
             backgroundColor: _successColor,
           ),
         );
@@ -211,13 +368,13 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     setState(() {
       _selectedDateReceived = null;
       _selectedForwardedTo = null;
-      _selectedMain = null;
-      _selectedSub = null;
-      _mainOptions = [];
-      _subOptions = [];
+      _selectedFilingCode = null;
+      _selectedRetentionPeriod = null;
+      _filingCodeOptions = [];
+      _isConfidential = false;
     });
     _dateReceivedController.clear();
-    _rdsCodeController.clear();
+    _filingCodeController.clear();
     _officeController.clear();
     _particularController.clear();
     _pdfNameController.clear();
@@ -225,13 +382,14 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     _commentController.clear();
     _actionTakenController.clear();
     _remarksController.clear();
+    _fileLocationAfterRetentionController.clear();
     _selectedPdfDataUrl = '';
   }
 
-  Map<String, List<String>> _buildRdsOptionsMap(
+  List<String> _buildFilingCodeOptions(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
-    final Map<String, List<String>> optionsMap = {};
+    final options = <String>{};
 
     for (final doc in docs) {
       final data = doc.data();
@@ -240,46 +398,27 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         continue;
       }
 
-      final rawSubcategories = data['subcategories'];
-      final subcategories = rawSubcategories is Iterable
-          ? rawSubcategories
-                .map((item) => item.toString().trim())
-                .where((item) => item.isNotEmpty)
-                .toList()
-          : <String>[];
-
-      optionsMap[name] = subcategories;
+      options.add(name);
     }
 
-    return optionsMap;
+    return options.toList()..sort();
   }
 
-  void _syncRdsSelectionFromOptions(Map<String, List<String>> optionsMap) {
-    _mainOptions = optionsMap.keys.toList()..sort();
+  void _syncFilingCodeSelectionFromOptions(List<String> options) {
+    _filingCodeOptions = options;
 
-    if (_selectedMain != null && !_mainOptions.contains(_selectedMain)) {
-      _selectedMain = null;
-      _selectedSub = null;
+    if (_selectedFilingCode != null &&
+        !_filingCodeOptions.contains(_selectedFilingCode)) {
+      _selectedFilingCode = null;
     }
 
-    _subOptions = _selectedMain != null
-        ? List<String>.from(optionsMap[_selectedMain] ?? const <String>[])
-        : <String>[];
-
-    if (_selectedSub != null && !_subOptions.contains(_selectedSub)) {
-      _selectedSub = null;
-    }
-
-    _rdsCodeController.text = _selectedMain != null && _selectedSub != null
-        ? '$_selectedMain - $_selectedSub'
-        : '';
+    _filingCodeController.text = _selectedFilingCode ?? '';
   }
 
   Future<void> _showAddRdsMainDialog(
     void Function(VoidCallback fn) setDialogState,
   ) async {
     final mainController = TextEditingController();
-    final initialSubController = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
     await showDialog<void>(
@@ -290,7 +429,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
             : const Color(0xFFFBF9F5),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
-          'Add RDS Code',
+          'Add Filing Code',
           style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
         ),
         content: SizedBox(
@@ -302,21 +441,13 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               children: [
                 TextFormField(
                   controller: mainController,
-                  decoration: _dialogInputDecoration('Main Category'),
+                  decoration: _dialogInputDecoration('Filing Code'),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Required';
                     }
                     return null;
                   },
-                ),
-                const SizedBox(height: 14),
-                TextFormField(
-                  controller: initialSubController,
-                  decoration: _dialogInputDecoration(
-                    'Initial Sub Category',
-                    hintText: 'Optional',
-                  ),
                 ),
               ],
             ),
@@ -334,7 +465,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               }
 
               final mainName = mainController.text.trim();
-              final initialSub = initialSubController.text.trim();
 
               try {
                 final existing = await FirebaseFirestore.instance
@@ -346,28 +476,18 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 if (existing.docs.isEmpty) {
                   await FirebaseFirestore.instance
                       .collection('rds_options')
-                      .add({
-                        'name': mainName,
-                        'subcategories': initialSub.isEmpty ? [] : [initialSub],
-                      });
-                } else if (initialSub.isNotEmpty) {
-                  await existing.docs.first.reference.update({
-                    'subcategories': FieldValue.arrayUnion([initialSub]),
-                  });
+                      .add({'name': mainName, 'subcategories': []});
                 }
 
                 setDialogState(() {
-                  _selectedMain = mainName;
-                  _selectedSub = initialSub.isEmpty ? null : initialSub;
-                  _rdsCodeController.text = initialSub.isEmpty
-                      ? ''
-                      : '$mainName - $initialSub';
+                  _selectedFilingCode = mainName;
+                  _filingCodeController.text = mainName;
                 });
 
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('RDS code added successfully.'),
+                      content: Text('Filing code added successfully.'),
                       backgroundColor: _successColor,
                     ),
                   );
@@ -398,123 +518,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     );
 
     mainController.dispose();
-    initialSubController.dispose();
-  }
-
-  Future<void> _showAddRdsSubcategoryDialog(
-    void Function(VoidCallback fn) setDialogState,
-  ) async {
-    if (_selectedMain == null || _selectedMain!.trim().isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Select a main RDS code first.'),
-            backgroundColor: Colors.orange.shade700,
-          ),
-        );
-      }
-      return;
-    }
-
-    final subController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: _isDark
-            ? const Color(0xFF161E27)
-            : const Color(0xFFFBF9F5),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          'Add Sub Category',
-          style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Form(
-            key: formKey,
-            child: TextFormField(
-              controller: subController,
-              decoration: _dialogInputDecoration(
-                'Sub Category for ${_selectedMain!}',
-              ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Required';
-                }
-                return null;
-              },
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (!(formKey.currentState?.validate() ?? false)) {
-                return;
-              }
-
-              final subName = subController.text.trim();
-
-              try {
-                final existing = await FirebaseFirestore.instance
-                    .collection('rds_options')
-                    .where('name', isEqualTo: _selectedMain)
-                    .limit(1)
-                    .get();
-
-                if (existing.docs.isEmpty) {
-                  throw Exception('Selected RDS code no longer exists.');
-                }
-
-                await existing.docs.first.reference.update({
-                  'subcategories': FieldValue.arrayUnion([subName]),
-                });
-
-                setDialogState(() {
-                  _selectedSub = subName;
-                  _rdsCodeController.text = '${_selectedMain!} - $subName';
-                });
-
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Sub category added successfully.'),
-                      backgroundColor: _successColor,
-                    ),
-                  );
-                }
-
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: Colors.red.shade700,
-                    ),
-                  );
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _primaryColor,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    subController.dispose();
   }
 
   Widget _buildRdsCodeDropdowns(void Function(VoidCallback fn) setDialogState) {
@@ -522,8 +525,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       stream: FirebaseFirestore.instance.collection('rds_options').snapshots(),
       builder: (context, snapshot) {
         final docs = snapshot.data?.docs ?? [];
-        final optionsMap = _buildRdsOptionsMap(docs);
-        _syncRdsSelectionFromOptions(optionsMap);
+        final options = _buildFilingCodeOptions(docs);
+        _syncFilingCodeSelectionFromOptions(options);
 
         final isLoading =
             snapshot.connectionState == ConnectionState.waiting &&
@@ -536,11 +539,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _mainOptions.contains(_selectedMain)
-                        ? _selectedMain
+                    value: _filingCodeOptions.contains(_selectedFilingCode)
+                        ? _selectedFilingCode
                         : null,
-                    decoration: _dialogInputDecoration('RDS Code'),
-                    items: _mainOptions
+                    decoration: _dialogInputDecoration('Filing Code'),
+                    items: _filingCodeOptions
                         .map(
                           (option) => DropdownMenuItem<String>(
                             value: option,
@@ -548,20 +551,16 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                           ),
                         )
                         .toList(),
-                    onChanged: isLoading || _mainOptions.isEmpty
+                    onChanged: isLoading || _filingCodeOptions.isEmpty
                         ? null
                         : (value) {
                             setDialogState(() {
-                              _selectedMain = value;
-                              _selectedSub = null;
-                              _subOptions = List<String>.from(
-                                optionsMap[value] ?? const <String>[],
-                              );
-                              _rdsCodeController.clear();
+                              _selectedFilingCode = value;
+                              _filingCodeController.text = value ?? '';
                             });
                           },
                     hint: Text(
-                      isLoading ? 'Loading main categories...' : 'Select main',
+                      isLoading ? 'Loading filing codes...' : 'Select filing code',
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
@@ -574,11 +573,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _subOptions.contains(_selectedSub)
-                        ? _selectedSub
+                    value:
+                        _retentionPeriodOptions.contains(_selectedRetentionPeriod)
+                        ? _selectedRetentionPeriod
                         : null,
-                    decoration: _dialogInputDecoration('Sub Category'),
-                    items: _subOptions
+                    decoration: _dialogInputDecoration('Retention Period'),
+                    items: _retentionPeriodOptions
                         .map(
                           (option) => DropdownMenuItem<String>(
                             value: option,
@@ -586,24 +586,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                           ),
                         )
                         .toList(),
-                    onChanged: _selectedMain == null || _subOptions.isEmpty
-                        ? null
-                        : (value) {
-                            setDialogState(() {
-                              _selectedSub = value;
-                              _rdsCodeController.text =
-                                  value != null && _selectedMain != null
-                                  ? '$_selectedMain - $value'
-                                  : '';
-                            });
-                          },
-                    hint: Text(
-                      _selectedMain == null
-                          ? 'Select main category first'
-                          : _subOptions.isEmpty
-                          ? 'No subcategories available'
-                          : 'Select sub',
-                    ),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        _selectedRetentionPeriod = value;
+                      });
+                    },
+                    hint: const Text('Select retention period'),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
                         return 'Required';
@@ -634,25 +622,16 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 TextButton.icon(
                   onPressed: () => _showAddRdsMainDialog(setDialogState),
                   icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Add RDS Code'),
-                  style: TextButton.styleFrom(foregroundColor: _primaryColor),
-                ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  onPressed: _selectedMain == null
-                      ? null
-                      : () => _showAddRdsSubcategoryDialog(setDialogState),
-                  icon: const Icon(Icons.playlist_add_outlined),
-                  label: const Text('Add Sub Category'),
+                  label: const Text('Add Filing Code'),
                   style: TextButton.styleFrom(foregroundColor: _primaryColor),
                 ),
               ],
             ),
-            if (_mainOptions.isEmpty && !isLoading && !snapshot.hasError)
+            if (_filingCodeOptions.isEmpty && !isLoading && !snapshot.hasError)
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'No RDS codes yet. Add one to enable the dropdown.',
+                  'No filing codes yet. Add one to enable the dropdown.',
                   style: TextStyle(
                     color: _secondaryText,
                     fontSize: 12,
@@ -673,18 +652,52 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   ) async {
     try {
       dynamic valueToUpdate = newValue.trim();
+      final updates = <String, dynamic>{};
+      DateTime? effectiveDateReceived;
+      String? effectiveRetentionPeriod;
 
       if (field == 'dateReceived') {
         valueToUpdate = Timestamp.fromDate(DateTime.parse(newValue));
+        effectiveDateReceived = DateTime.parse(newValue);
+      }
+
+      updates[field] = valueToUpdate;
+      if (field == 'dateReceived') {
+        updates['date'] = valueToUpdate;
+      }
+
+      if (field == 'retentionPeriod') {
+        effectiveRetentionPeriod = newValue.trim();
+      }
+
+      if (field == 'dateReceived' || field == 'retentionPeriod') {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('documents')
+            .doc(docId)
+            .get();
+        final data = snapshot.data() ?? <String, dynamic>{};
+        effectiveDateReceived ??= _extractTimestamp(data)?.toDate();
+        effectiveRetentionPeriod ??= _retentionPeriodFromData(data);
+
+        final normalizedRetention =
+            (effectiveRetentionPeriod ?? '').trim().toLowerCase();
+        if (normalizedRetention == 'permanent') {
+          updates['dispositionDate'] = 'Permanent';
+        } else {
+          final dispositionDate = _calculateDispositionDate(
+            effectiveDateReceived,
+            effectiveRetentionPeriod ?? '',
+          );
+          updates['dispositionDate'] = dispositionDate == null
+              ? ''
+              : Timestamp.fromDate(dispositionDate);
+        }
       }
 
       await FirebaseFirestore.instance
           .collection('documents')
           .doc(docId)
-          .update({
-            field: valueToUpdate,
-            if (field == 'dateReceived') 'date': valueToUpdate,
-          });
+          .update(updates);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -819,7 +832,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     final List<List<String>> csvData = [
       [
         'Date Received',
-        'RDS Code',
+        'Filing Code',
+        'Retention Period',
+        'File Location',
+        'Disposition Date',
         'Control Number',
         'Office',
         'Particular',
@@ -828,7 +844,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         'Received By',
         'Comment',
         'Action Taken',
+        'Document',
         'Remarks',
+        'Access',
+        'Status',
         'Scanned File URL',
       ],
     ];
@@ -853,7 +872,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       if (include) {
         csvData.add([
           DateFormat('yyyy-MM-dd').format(date),
-          (data['rdsCode'] ?? '').toString(),
+          _filingCodeFromData(data),
+          _retentionPeriodFromData(data),
+          _fileLocationFromData(data),
+          _dispositionDateFromData(data),
           (data['controlNumber'] ?? '').toString(),
           (data['office'] ?? '').toString(),
           (data['particular'] ?? '').toString(),
@@ -861,10 +883,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           (data['forwardedTo'] ?? '').toString(),
           (data['receivedBy'] ?? '').toString(),
           (data['comment'] ?? '').toString(),
-          (data['actionTaken'] ?? '').toString(),
-          (data['adminDocumentFileName'] ?? '').toString(),
-          (data['remarks'] ?? '').toString(),
-          (data['scannedFileUrl'] ?? '').toString(),
+                      (data['actionTaken'] ?? '').toString(),
+                      (data['adminDocumentFileName'] ?? '').toString(),
+                      (data['remarks'] ?? '').toString(),
+                      _isConfidentialFromData(data) ? 'confidential' : 'open',
+                      _statusFromData(data),
+                      (data['scannedFileUrl'] ?? '').toString(),
         ]);
       }
     }
@@ -960,6 +984,339 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     );
   }
 
+  Future<void> _showUpdateRegistryDialog(
+    String docId,
+    Map<String, dynamic> data,
+  ) async {
+    final controlNumberController = TextEditingController(
+      text: (data['controlNumber'] ?? '').toString(),
+    );
+    final officeController = TextEditingController(
+      text: (data['office'] ?? '').toString(),
+    );
+    final particularController = TextEditingController(
+      text: (data['particular'] ?? '').toString(),
+    );
+    final forwardedToController = TextEditingController(
+      text: (data['forwardedTo'] ?? '').toString(),
+    );
+    final receivedByController = TextEditingController(
+      text: (data['receivedBy'] ?? '').toString(),
+    );
+    final commentController = TextEditingController(
+      text: (data['comment'] ?? '').toString(),
+    );
+    final actionTakenController = TextEditingController(
+      text: (data['actionTaken'] ?? '').toString(),
+    );
+    final fileLocationController = TextEditingController(
+      text: _fileLocationFromData(data),
+    );
+    final remarksController = TextEditingController(
+      text: (data['remarks'] ?? '').toString(),
+    );
+    String scannedFileUrl = (data['scannedFileUrl'] ?? '').toString();
+    String pdfFileName = (data['pdfFileName'] ?? '').toString();
+    String adminDocumentUrl = (data['adminDocumentUrl'] ?? '').toString();
+    String adminDocumentFileName =
+        (data['adminDocumentFileName'] ?? '').toString();
+    bool isConfidential = _isConfidentialFromData(data);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: _isDark
+              ? const Color(0xFF161E27)
+              : const Color(0xFFFBF9F5),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'Update Registry',
+            style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+          ),
+          content: SizedBox(
+            width: 620,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: controlNumberController,
+                          decoration: _dialogInputDecoration('Control Number'),
+                          style: TextStyle(color: _primaryText),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: officeController,
+                          decoration: _dialogInputDecoration('Office'),
+                          style: TextStyle(color: _primaryText),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: particularController,
+                    decoration: _dialogInputDecoration('Particular'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: forwardedToController,
+                          decoration: _dialogInputDecoration('Forwarded To'),
+                          style: TextStyle(color: _primaryText),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: receivedByController,
+                          decoration: _dialogInputDecoration('Received By'),
+                          style: TextStyle(color: _primaryText),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: commentController,
+                    decoration: _dialogInputDecoration('Comment'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: actionTakenController,
+                    decoration: _dialogInputDecoration('Action Taken'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: fileLocationController,
+                    decoration: _dialogInputDecoration('File Location'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: remarksController,
+                    decoration: _dialogInputDecoration('Remarks'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 14),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: isConfidential,
+                    activeColor: _primaryColor,
+                    secondary: Icon(
+                      Icons.lock_outline,
+                      color: isConfidential ? _primaryColor : _secondaryText,
+                    ),
+                    title: Text(
+                      'Confidential',
+                      style: TextStyle(
+                        color: _primaryText,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Only Super Admin and Supervisor Admin can access this entry.',
+                      style: TextStyle(color: _secondaryText),
+                    ),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        isConfidential = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final attachment =
+                                await _pickRegistryAttachment();
+                            if (attachment == null) return;
+                            setDialogState(() {
+                              scannedFileUrl = attachment['url'] ?? '';
+                              pdfFileName = attachment['name'] ?? '';
+                            });
+                          },
+                          icon: const Icon(Icons.attach_file_outlined),
+                          label: Text(
+                            pdfFileName.trim().isEmpty
+                                ? 'Add Received Attachment'
+                                : pdfFileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final attachment =
+                                await _pickRegistryAttachment();
+                            if (attachment == null) return;
+                            setDialogState(() {
+                              adminDocumentUrl = attachment['url'] ?? '';
+                              adminDocumentFileName =
+                                  attachment['name'] ?? '';
+                            });
+                          },
+                          icon: const Icon(Icons.upload_file_outlined),
+                          label: Text(
+                            adminDocumentFileName.trim().isEmpty
+                                ? 'Add Document'
+                                : adminDocumentFileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                await FirebaseFirestore.instance
+                    .collection('documents')
+                    .doc(docId)
+                    .update({
+                      'controlNumber': controlNumberController.text.trim(),
+                      'office': officeController.text.trim(),
+                      'particular': particularController.text.trim(),
+                      'forwardedTo': forwardedToController.text.trim(),
+                      'receivedBy': receivedByController.text.trim(),
+                      'comment': commentController.text.trim(),
+                      'actionTaken': actionTakenController.text.trim(),
+                      'fileLocation': fileLocationController.text.trim(),
+                      'remarks': remarksController.text.trim(),
+                      'scannedFileUrl': scannedFileUrl,
+                      'pdfFileName': pdfFileName,
+                      'adminDocumentUrl': adminDocumentUrl,
+                      'adminDocumentFileName': adminDocumentFileName,
+                      'isConfidential': isConfidential,
+                      'registryUpdatedAt': FieldValue.serverTimestamp(),
+                    });
+                if (mounted) {
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Registry updated successfully.'),
+                      backgroundColor: _successColor,
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Update Registry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDropdownCellDialog({
+    required String title,
+    required String docId,
+    required String field,
+    required String currentValue,
+    required List<String> options,
+  }) async {
+    String? selectedValue = currentValue.trim().isEmpty ? null : currentValue;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: _isDark
+              ? const Color(0xFF161E27)
+              : const Color(0xFFFBF9F5),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Text(
+            title,
+            style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: DropdownButtonFormField<String>(
+              value: options.contains(selectedValue) ? selectedValue : null,
+              decoration: _dialogInputDecoration(title),
+              dropdownColor: _cardBackground,
+              items: options
+                  .map(
+                    (option) => DropdownMenuItem<String>(
+                      value: option,
+                      child: Text(option),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                setDialogState(() {
+                  selectedValue = value;
+                });
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text(
+                'Close',
+                style: TextStyle(color: _primaryColor),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: selectedValue == null || selectedValue == currentValue
+                  ? null
+                  : () async {
+                      await _updateDocument(docId, field, selectedValue!);
+                      if (mounted) {
+                        Navigator.pop(dialogContext);
+                      }
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accentColor,
+                foregroundColor: Colors.black87,
+              ),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEditableCell(
     String docId,
     String field,
@@ -978,6 +1335,50 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         editable: true,
       ),
       showEditIcon: true,
+    );
+  }
+
+  Widget _buildDropdownEditableCell(
+    String docId,
+    String field,
+    String value, {
+    required String label,
+    required List<String> options,
+    double width = 96,
+  }) {
+    return _buildCellCard(
+      value,
+      width: width,
+      onTap: () => _showDropdownCellDialog(
+        title: label,
+        docId: docId,
+        field: field,
+        currentValue: value,
+        options: options,
+      ),
+      showEditIcon: true,
+    );
+  }
+
+  Widget _buildFilingCodeEditableCell(
+    String docId,
+    String value, {
+    required String label,
+    double width = 96,
+  }) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('rds_options').snapshots(),
+      builder: (context, snapshot) {
+        final options = _buildFilingCodeOptions(snapshot.data?.docs ?? []);
+        return _buildDropdownEditableCell(
+          docId,
+          'filingCode',
+          value,
+          label: label,
+          options: options,
+          width: width,
+        );
+      },
     );
   }
 
@@ -1040,6 +1441,127 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    final color = _statusColor(status);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(_isDark ? 0.22 : 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.45)),
+      ),
+      child: Text(
+        _statusLabel(status),
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConfidentialBadge(bool isConfidential) {
+    final color = isConfidential ? _primaryColor : _secondaryText;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isConfidential
+            ? _primaryColor.withOpacity(_isDark ? 0.22 : 0.1)
+            : _softBackground,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: isConfidential
+              ? _primaryColor.withOpacity(0.45)
+              : _effectiveBorder,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isConfidential ? Icons.lock_outline : Icons.lock_open_outlined,
+            size: 14,
+            color: color,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isConfidential ? 'Confidential' : 'Open',
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHorizontalScrollControl() {
+    return AnimatedBuilder(
+      animation: _tableHorizontalController,
+      builder: (context, _) {
+        final hasClients = _tableHorizontalController.hasClients;
+        final maxExtent = hasClients
+            ? _tableHorizontalController.position.maxScrollExtent
+            : 0.0;
+        final canScroll = maxExtent > 0;
+        final canScrollLeft =
+            hasClients && _tableHorizontalController.offset > 0;
+        final canScrollRight =
+            hasClients && _tableHorizontalController.offset < maxExtent;
+
+        void scrollBy(double delta) {
+          if (!canScroll) {
+            return;
+          }
+
+          final target = (_tableHorizontalController.offset + delta).clamp(
+            0.0,
+            maxExtent,
+          );
+          _tableHorizontalController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+        }
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: _softBackground,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: _effectiveBorder),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                onPressed: canScrollLeft ? () => scrollBy(-520) : null,
+                icon: const Icon(Icons.chevron_left),
+                tooltip: 'Scroll left',
+                color: _primaryColor,
+                splashRadius: 18,
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                onPressed: canScrollRight ? () => scrollBy(520) : null,
+                icon: const Icon(Icons.chevron_right),
+                tooltip: 'Scroll right',
+                color: _primaryColor,
+                splashRadius: 18,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1143,6 +1665,27 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     }
   }
 
+  Future<Map<String, String>?> _pickRegistryAttachment() async {
+    final uploadInput = html.FileUploadInputElement()
+      ..accept = _allowedAttachmentTypes;
+    uploadInput.click();
+
+    await uploadInput.onChange.first;
+    final file = uploadInput.files?.first;
+    if (file == null) {
+      return null;
+    }
+
+    final reader = html.FileReader();
+    reader.readAsDataUrl(file);
+    await reader.onLoad.first;
+
+    return {
+      'url': reader.result?.toString() ?? '',
+      'name': file.name,
+    };
+  }
+
   InputDecoration _dialogInputDecoration(
     String label, {
     Widget? suffixIcon,
@@ -1171,8 +1714,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     );
   }
 
-  void _showAddDocumentDialog() {
+  void _showAddDocumentDialog({bool confidential = false}) {
     _clearForm();
+    _isConfidential = confidential;
     _generateControlNumber();
 
     showDialog(
@@ -1225,6 +1769,25 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                   ],
                 ),
               ),
+              const SizedBox(width: 12),
+              FilterChip(
+                selected: _isConfidential,
+                avatar: Icon(
+                  _isConfidential
+                      ? Icons.lock_outline
+                      : Icons.lock_open_outlined,
+                  size: 18,
+                ),
+                label: const Text('Confidential'),
+                selectedColor: _primaryColor.withOpacity(0.16),
+                checkmarkColor: _primaryColor,
+                onSelected: (value) {
+                  setDialogState(() {
+                    _isConfidential = value;
+                  });
+                  setState(() {});
+                },
+              ),
             ],
           ),
           content: SingleChildScrollView(
@@ -1247,12 +1810,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                             'Date Received',
                             suffixIcon: const Icon(Icons.calendar_today),
                           ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Please select a date';
-                            }
-                            return null;
-                          },
                         ),
                       ),
                     ),
@@ -1268,12 +1825,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                               'Control Number',
                             ),
                             style: const TextStyle(fontWeight: FontWeight.w700),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -1281,12 +1832,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                           child: TextFormField(
                             controller: _officeController,
                             decoration: _dialogInputDecoration('Office'),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
                           ),
                         ),
                       ],
@@ -1295,12 +1840,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     TextFormField(
                       controller: _particularController,
                       decoration: _dialogInputDecoration('Particular'),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Required';
-                        }
-                        return null;
-                      },
                     ),
                     const SizedBox(height: 14),
                     Row(
@@ -1361,12 +1900,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                 _selectedForwardedTo = value;
                               });
                             },
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -1374,12 +1907,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                           child: TextFormField(
                             controller: _receivedByController,
                             decoration: _dialogInputDecoration('Received By'),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
                           ),
                         ),
                       ],
@@ -1394,6 +1921,14 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     TextFormField(
                       controller: _actionTakenController,
                       decoration: _dialogInputDecoration('Action Taken'),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _fileLocationAfterRetentionController,
+                      decoration: _dialogInputDecoration(
+                        'File Location',
+                      ),
                       maxLines: 2,
                     ),
                     const SizedBox(height: 14),
@@ -1731,7 +2266,21 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 label: const Text('Export CSV'),
               ),
               ElevatedButton.icon(
-                onPressed: _showAddDocumentDialog,
+                onPressed: () => _showAddDocumentDialog(confidential: true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _softBackground,
+                  foregroundColor: _primaryColor,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 16,
+                  ),
+                  side: BorderSide(color: _effectiveBorder),
+                ),
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Confidential'),
+              ),
+              ElevatedButton.icon(
+                onPressed: () => _showAddDocumentDialog(),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _primaryColor,
                   foregroundColor: Colors.white,
@@ -1855,25 +2404,25 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     thumbVisibility: true,
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        const tableWidth = 1810.0;
+                        final tableMinWidth = constraints.maxWidth > 2680
+                            ? constraints.maxWidth
+                            : 2680.0;
 
                         return SingleChildScrollView(
                           controller: _tableVerticalController,
                           padding: const EdgeInsets.all(16),
-                          child: Scrollbar(
+                          child: SingleChildScrollView(
                             controller: _tableHorizontalController,
-                            thumbVisibility: true,
-                            notificationPredicate: (notification) =>
-                                notification.depth == 1,
-                            child: SingleChildScrollView(
-                              controller: _tableHorizontalController,
-                              scrollDirection: Axis.horizontal,
-                              child: SizedBox(
-                                width: tableWidth,
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minWidth: tableMinWidth,
+                                ),
                                 child: DataTable(
-                              columnSpacing: 12,
-                              dataRowMinHeight: 68,
-                              dataRowMaxHeight: 84,
+                              columnSpacing: 18,
+                              horizontalMargin: 16,
+                              dataRowMinHeight: 70,
+                              dataRowMaxHeight: 86,
                               headingRowHeight: 58,
                               dividerThickness: 0.6,
                               headingTextStyle: TextStyle(
@@ -1891,7 +2440,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                               ),
                               columns: [
                                 DataColumn(label: Text('Date Received')),
-                                DataColumn(label: Text('RDS Code')),
+                                DataColumn(label: Text('Filing Code')),
+                                DataColumn(label: Text('Retention Period')),
+                                DataColumn(label: Text('File Location')),
+                                DataColumn(label: Text('Disposition Date')),
                                 DataColumn(label: Text('Control Number')),
                                 DataColumn(label: Text('Office')),
                                 DataColumn(label: Text('Particular')),
@@ -1902,7 +2454,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                 DataColumn(label: Text('Action Taken')),
                                 DataColumn(label: Text('Document')),
                                 DataColumn(label: Text('Remarks')),
-                                DataColumn(label: Text('Delete')),
+                                DataColumn(label: Text('Access')),
+                                DataColumn(label: Text('Status')),
+                                DataColumn(label: Text('Actions')),
                               ],
                               rows: docs.map((doc) {
                                 final data = doc.data();
@@ -1913,15 +2467,41 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'dateReceived',
                                         _formatDate(_extractTimestamp(data)),
-                                        width: 120,
+                                        width: 132,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildFilingCodeEditableCell(
+                                        doc.id,
+                                        _filingCodeFromData(data),
+                                        label: 'Filing Code',
+                                        width: 152,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildDropdownEditableCell(
+                                        doc.id,
+                                        'retentionPeriod',
+                                        _retentionPeriodFromData(data),
+                                        label: 'Retention Period',
+                                        options: _retentionPeriodOptions,
+                                        width: 150,
                                       ),
                                     ),
                                     DataCell(
                                       _buildEditableCell(
                                         doc.id,
-                                        'rdsCode',
-                                        (data['rdsCode'] ?? '').toString(),
-                                        width: 104,
+                                        'fileLocation',
+                                        _fileLocationFromData(data),
+                                        label: 'File Location',
+                                        width: 172,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        _dispositionDateFromData(data),
+                                        label: 'Disposition Date',
+                                        width: 148,
                                       ),
                                     ),
                                     DataCell(
@@ -1930,7 +2510,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         'controlNumber',
                                         (data['controlNumber'] ?? '')
                                             .toString(),
-                                        width: 100,
+                                        width: 124,
                                       ),
                                     ),
                                     DataCell(
@@ -1938,7 +2518,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'office',
                                         (data['office'] ?? '').toString(),
-                                        width: 130,
+                                        width: 156,
                                       ),
                                     ),
                                     DataCell(
@@ -1946,12 +2526,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'particular',
                                         (data['particular'] ?? '').toString(),
-                                        width: 170,
+                                        width: 220,
                                       ),
                                     ),
                                     DataCell(
                                       SizedBox(
-                                        width: 150,
+                                        width: 172,
                                         child: Builder(
                                           builder: (context) {
                                             final hasBeenDownloaded =
@@ -1997,7 +2577,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                                       color: downloadLabelColor,
                                                     ),
                                                     label: SizedBox(
-                                                      width: 120,
+                                                      width: 140,
                                                       child: Text(
                                                         ((data['pdfFileName'] ??
                                                                         '')
@@ -2027,7 +2607,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'forwardedTo',
                                         (data['forwardedTo'] ?? '').toString(),
-                                        width: 120,
+                                        width: 142,
                                       ),
                                     ),
                                     DataCell(
@@ -2035,7 +2615,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'receivedBy',
                                         (data['receivedBy'] ?? '').toString(),
-                                        width: 130,
+                                        width: 156,
                                       ),
                                     ),
                                     DataCell(
@@ -2043,7 +2623,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'comment',
                                         (data['comment'] ?? '').toString(),
-                                        width: 132,
+                                        width: 172,
                                       ),
                                     ),
                                     DataCell(
@@ -2051,12 +2631,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'actionTaken',
                                         (data['actionTaken'] ?? '').toString(),
-                                        width: 132,
+                                        width: 172,
                                       ),
                                     ),
                                     DataCell(
                                       SizedBox(
-                                        width: 128,
+                                        width: 156,
                                         child:
                                             (data['adminDocumentUrl'] ?? '')
                                                 .toString()
@@ -2086,7 +2666,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                                   size: 18,
                                                 ),
                                                 label: SizedBox(
-                                                  width: 120,
+                                                  width: 138,
                                                   child: Text(
                                                     ((data['adminDocumentFileName'] ??
                                                                     '')
@@ -2110,29 +2690,75 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                         doc.id,
                                         'remarks',
                                         (data['remarks'] ?? '').toString(),
-                                        width: 128,
+                                        width: 156,
                                       ),
                                     ),
                                     DataCell(
                                       SizedBox(
-                                        width: 56,
-                                        child: Center(
-                                          child: IconButton(
-                                            onPressed: () =>
-                                                _showDeleteDialog(doc.id),
-                                            icon: const Icon(
-                                              Icons.delete_outline,
-                                              color: Colors.red,
-                                            ),
-                                            iconSize: 20,
-                                            splashRadius: 20,
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(
-                                              minWidth: 36,
-                                              minHeight: 36,
-                                            ),
-                                            tooltip: 'Delete document',
+                                        width: 124,
+                                        child: Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: _buildConfidentialBadge(
+                                            _isConfidentialFromData(data),
                                           ),
+                                        ),
+                                      ),
+                                    ),
+                                    DataCell(
+                                      SizedBox(
+                                        width: 110,
+                                        child: Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: _buildStatusBadge(
+                                            _statusFromData(data),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    DataCell(
+                                      SizedBox(
+                                        width: 108,
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            IconButton(
+                                              onPressed: () =>
+                                                  _showUpdateRegistryDialog(
+                                                doc.id,
+                                                data,
+                                              ),
+                                              icon: const Icon(
+                                                Icons.edit_note_outlined,
+                                              ),
+                                              iconSize: 22,
+                                              splashRadius: 20,
+                                              padding: EdgeInsets.zero,
+                                              constraints:
+                                                  const BoxConstraints(
+                                                minWidth: 36,
+                                                minHeight: 36,
+                                              ),
+                                              tooltip: 'Update registry',
+                                            ),
+                                            IconButton(
+                                              onPressed: () =>
+                                                  _showDeleteDialog(doc.id),
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                                color: Colors.red,
+                                              ),
+                                              iconSize: 20,
+                                              splashRadius: 20,
+                                              padding: EdgeInsets.zero,
+                                              constraints:
+                                                  const BoxConstraints(
+                                                minWidth: 36,
+                                                minHeight: 36,
+                                              ),
+                                              tooltip: 'Delete document',
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -2140,14 +2766,20 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                 );
                               }).toList(),
                                     ),
-                              ),
                             ),
                           ),
                         );
                       },
                     ),
                   ),
-        ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: _buildHorizontalScrollControl(),
+            ),
+          ),
       ],
       ),
     );
@@ -2191,7 +2823,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     final data = doc.data();
                     final searchableValues = [
                       _formatDate(_extractTimestamp(data)),
-                      (data['rdsCode'] ?? '').toString(),
+                      _filingCodeFromData(data),
+                      _retentionPeriodFromData(data),
+                      _dispositionDateFromData(data),
                       (data['controlNumber'] ?? '').toString(),
                       (data['office'] ?? '').toString(),
                       (data['particular'] ?? '').toString(),
@@ -2200,9 +2834,12 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       (data['receivedBy'] ?? '').toString(),
                       (data['comment'] ?? '').toString(),
                       (data['actionTaken'] ?? '').toString(),
-                      (data['adminDocumentFileName'] ?? '').toString(),
-                      (data['remarks'] ?? '').toString(),
-                      (data['scannedFileUrl'] ?? '').toString(),
+                      _fileLocationFromData(data),
+          (data['adminDocumentFileName'] ?? '').toString(),
+          (data['remarks'] ?? '').toString(),
+          _isConfidentialFromData(data) ? 'Confidential' : 'Open',
+          _statusLabel(_statusFromData(data)),
+          (data['scannedFileUrl'] ?? '').toString(),
                     ].map((value) => value.toLowerCase());
 
                     return searchableValues.any(

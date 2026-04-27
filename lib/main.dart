@@ -5,6 +5,7 @@ import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart'; // <-- import the signup screen
 import 'screens/super_admin_dashboard.dart';
 import 'screens/admin_dashboard.dart'; // <-- import the admin dashboard
+import 'screens/supervisoradmindashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,6 +44,7 @@ class MyApp extends StatelessWidget {
         '/signup': (context) => const SignUpScreen(), // <-- signup route
         '/super_admin': (context) => const SuperAdminDashboard(),
         '/admin': (context) => const AdminDashboard(), // <-- admin route
+        '/supervisor_admin': (context) => const SupervisorAdminDashboard(),
       },
     );
   }

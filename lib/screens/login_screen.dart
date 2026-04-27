@@ -46,6 +46,7 @@ class _LoginScreenState extends State<LoginScreen>
 
       final userData = querySnapshot.docs.first.data();
       final role = userData['role']?.toString();
+      print("ROLE FROM FIRESTORE: $role");
 
       if (role == null) {
         _showError('User role not found.');
@@ -59,6 +60,10 @@ class _LoginScreenState extends State<LoginScreen>
 
         case 'admin':
           Navigator.pushReplacementNamed(context, '/admin');
+          break;
+
+        case 'supervisor_admin':
+          Navigator.pushReplacementNamed(context, '/supervisor_admin');
           break;
 
         default:
@@ -107,6 +112,7 @@ class _LoginScreenState extends State<LoginScreen>
           );
         },
         child: SingleChildScrollView(
+          physics: NeverScrollableScrollPhysics(),
           child: Center(
             child: Container(
               width: 400,
