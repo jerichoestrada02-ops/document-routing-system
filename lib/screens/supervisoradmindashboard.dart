@@ -1,6 +1,10 @@
+import 'dart:html' as html;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 class SupervisorAdminDashboard extends StatefulWidget {
   const SupervisorAdminDashboard({super.key});
@@ -25,6 +29,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
   final ScrollController _tableVerticalController = ScrollController();
 
   String _searchText = '';
+  String _selectedRegistryStatus = 'pending';
   bool _darkMode = false;
 
   bool get _isDark => _darkMode;
@@ -57,6 +62,218 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
     setState(() {
       _darkMode = !_darkMode;
     });
+  }
+
+  String _routingSlipValue(Map<String, dynamic> data, String field) {
+    return (data[field] ?? '').toString().trim();
+  }
+
+  String _safePdfFileName(String value) {
+    final sanitized = value
+        .trim()
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+    return sanitized.isEmpty ? 'document' : sanitized;
+  }
+
+  Future<void> exportRoutingSlipPdf(Map<String, dynamic> data) async {
+    final pdf = pw.Document();
+    final dateReceived = _formatDate(_extractTimestamp(data));
+    final controlNumber = _routingSlipValue(data, 'controlNumber');
+    final office = _routingSlipValue(data, 'office');
+    final particular = _routingSlipValue(data, 'particular');
+    final comment = _routingSlipValue(data, 'comment');
+    final receivedBy = _routingSlipValue(data, 'receivedBy');
+
+    pw.Widget labeledLine(String label, String value) {
+      return pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        children: [
+          pw.Text(
+            label,
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(width: 5),
+          pw.Expanded(
+            child: pw.Container(
+              padding: const pw.EdgeInsets.only(bottom: 2),
+              decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                  bottom: pw.BorderSide(width: 0.6, color: PdfColors.black),
+                ),
+              ),
+              child: pw.Text(value, style: const pw.TextStyle(fontSize: 9)),
+            ),
+          ),
+        ],
+      );
+    }
+
+    pw.Widget checkbox(String label) {
+      return pw.Padding(
+        padding: const pw.EdgeInsets.only(bottom: 6),
+        child: pw.Row(
+          children: [
+            pw.Container(
+              width: 10,
+              height: 10,
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(width: 0.8, color: PdfColors.black),
+              ),
+            ),
+            pw.SizedBox(width: 6),
+            pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
+          ],
+        ),
+      );
+    }
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a5.landscape,
+        margin: const pw.EdgeInsets.all(18),
+        build: (context) {
+          return pw.Container(
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(width: 1.2, color: PdfColors.black),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Center(
+                  child: pw.Column(
+                    children: [
+                      pw.Text(
+                        'GENERAL SERVICES OFFICE',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                      pw.SizedBox(height: 2),
+                      pw.Text(
+                        'City Government',
+                        style: const pw.TextStyle(fontSize: 10),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'ROUTING SLIP',
+                        style: pw.TextStyle(
+                          fontSize: 15,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: labeledLine('Communication No:', controlNumber),
+                    ),
+                    pw.SizedBox(width: 18),
+                    pw.Expanded(child: labeledLine('Date:', dateReceived)),
+                  ],
+                ),
+                pw.SizedBox(height: 9),
+                labeledLine('From:', office),
+                pw.SizedBox(height: 8),
+                labeledLine('Subject:', particular),
+                pw.SizedBox(height: 12),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          checkbox('For Information'),
+                          checkbox('Prepare reply'),
+                          checkbox('Note and file'),
+                          checkbox('For investigation & report'),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 22),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          checkbox('For verification'),
+                          checkbox('For appropriate action'),
+                          checkbox('Signature'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 8),
+                pw.Text(
+                  'Comment',
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Container(
+                  height: 56,
+                  padding: const pw.EdgeInsets.all(6),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(width: 0.8, color: PdfColors.black),
+                  ),
+                  child: pw.Text(
+                    comment,
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ),
+                pw.Spacer(),
+                pw.Row(
+                  children: [
+                    pw.Expanded(child: labeledLine('Received By:', receivedBy)),
+                    pw.SizedBox(width: 24),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.center,
+                        children: [
+                          pw.Text(
+                            'EUGENE D. BUYUCAN',
+                            style: pw.TextStyle(
+                              fontSize: 12,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(height: 2),
+                          pw.Text(
+                            'City General Services Officer',
+                            style: const pw.TextStyle(fontSize: 8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    final bytes = await pdf.save();
+    final fileName = 'routing_slip_${_safePdfFileName(controlNumber)}.pdf';
+    final blob = html.Blob([bytes], 'application/pdf');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute('download', fileName)
+      ..style.display = 'none';
+
+    html.document.body?.children.add(anchor);
+    anchor.click();
+    anchor.remove();
+    html.Url.revokeObjectUrl(url);
   }
 
   Timestamp? _extractTimestamp(Map<String, dynamic> data) {
@@ -199,13 +416,19 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
     return normalized[0].toUpperCase() + normalized.substring(1);
   }
 
+  String get _selectedRegistryStatusLabel =>
+      _statusLabel(_selectedRegistryStatus);
+
   Future<void> _approveDocument(String docId) async {
     try {
-      await FirebaseFirestore.instance.collection('documents').doc(docId).update({
-        'status': 'approved',
-        'approvedBy': 'Supervisor Admin',
-        'approvedAt': FieldValue.serverTimestamp(),
-      });
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(docId)
+          .update({
+            'status': 'approved',
+            'approvedBy': 'Supervisor Admin',
+            'approvedAt': FieldValue.serverTimestamp(),
+          });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -229,10 +452,10 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
 
   Future<void> _rejectDocument(String docId) async {
     try {
-      await FirebaseFirestore.instance.collection('documents').doc(docId).update({
-        'status': 'rejected',
-        'remarks': 'Rejected by Supervisor',
-      });
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(docId)
+          .update({'status': 'rejected', 'remarks': 'Rejected by Supervisor'});
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -440,7 +663,9 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
     );
   }
 
-  int _countWithAttachments(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+  int _countWithAttachments(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
     return docs.where((doc) {
       final file = (doc.data()['scannedFileUrl'] ?? '').toString().trim();
       return file.isNotEmpty;
@@ -607,7 +832,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                   controller: _searchController,
                   decoration: InputDecoration(
                     hintText:
-                        'Search pending records by date, control no., office, person, or remarks',
+                        'Search ${_selectedRegistryStatusLabel.toLowerCase()} records by date, control no., office, person, or remarks',
                     prefixIcon: const Icon(Icons.search, color: _primaryColor),
                     filled: true,
                     fillColor: _softBackground,
@@ -633,10 +858,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
                   color: _softBackground,
                   borderRadius: BorderRadius.circular(14),
@@ -651,12 +873,37 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       size: 20,
                     ),
                     const SizedBox(width: 10),
-                    Text(
-                      'Showing pending approvals only',
+                    DropdownButton<String>(
+                      value: _selectedRegistryStatus,
+                      underline: const SizedBox.shrink(),
+                      iconEnabledColor: _primaryColor,
+                      dropdownColor: _cardBackground,
                       style: TextStyle(
                         color: _primaryText,
                         fontWeight: FontWeight.w600,
                       ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'pending',
+                          child: Text('Pending Registry'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'approved',
+                          child: Text('Approved Registry'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rejected',
+                          child: Text('Rejected Registry'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() {
+                          _selectedRegistryStatus = value;
+                        });
+                      },
                     ),
                   ],
                 ),
@@ -725,7 +972,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    '${docs.length} pending',
+                    '${docs.length} ${_selectedRegistryStatusLabel.toLowerCase()}',
                     style: const TextStyle(
                       color: _primaryColor,
                       fontWeight: FontWeight.w700,
@@ -751,7 +998,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                           ),
                           const SizedBox(height: 14),
                           Text(
-                            'No pending documents found.',
+                            'No ${_selectedRegistryStatusLabel.toLowerCase()} documents found.',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -760,7 +1007,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Approved or rejected records disappear automatically from this dashboard.',
+                            'Use the registry status dropdown to switch views.',
                             style: TextStyle(color: _secondaryText),
                             textAlign: TextAlign.center,
                           ),
@@ -784,246 +1031,297 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                             controller: _tableHorizontalController,
                             scrollDirection: Axis.horizontal,
                             child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  minWidth: tableMinWidth,
+                              constraints: BoxConstraints(
+                                minWidth: tableMinWidth,
+                              ),
+                              child: DataTable(
+                                columnSpacing: 18,
+                                horizontalMargin: 16,
+                                dataRowMinHeight: 72,
+                                dataRowMaxHeight: 90,
+                                headingRowHeight: 58,
+                                dividerThickness: 0.6,
+                                headingTextStyle: TextStyle(
+                                  color: _primaryText,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                child: DataTable(
-                                  columnSpacing: 18,
-                                  horizontalMargin: 16,
-                                  dataRowMinHeight: 72,
-                                  dataRowMaxHeight: 90,
-                                  headingRowHeight: 58,
-                                  dividerThickness: 0.6,
-                                  headingTextStyle: TextStyle(
-                                    color: _primaryText,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
+                                headingRowColor: WidgetStateProperty.all(
+                                  _tableHeaderBackground,
+                                ),
+                                border: TableBorder(
+                                  horizontalInside: BorderSide(
+                                    color: _effectiveBorder,
                                   ),
-                                  headingRowColor: WidgetStateProperty.all(
-                                    _tableHeaderBackground,
-                                  ),
-                                  border: TableBorder(
-                                    horizontalInside: BorderSide(
-                                      color: _effectiveBorder,
-                                    ),
-                                  ),
-                                  columns: const [
-                                    DataColumn(label: Text('Date Received')),
-                                    DataColumn(label: Text('Filing Code')),
-                                    DataColumn(label: Text('Retention Period')),
-                                    DataColumn(label: Text('File Location')),
-                                    DataColumn(label: Text('Disposition Date')),
-                                    DataColumn(label: Text('Control Number')),
-                                    DataColumn(label: Text('Office')),
-                                    DataColumn(label: Text('Particular')),
-                                    DataColumn(label: Text('Forwarded To')),
-                                    DataColumn(label: Text('Received By')),
-                                    DataColumn(label: Text('Comment')),
-                                    DataColumn(label: Text('Action Taken')),
-                                    DataColumn(label: Text('Remarks')),
-                                    DataColumn(label: Text('Status')),
-                                    DataColumn(label: Text('Actions')),
-                                  ],
-                                  rows: docs.map((doc) {
-                                    final data = doc.data();
-                                    final status = _statusFromData(data);
-                                    final controlNumber =
-                                        (data['controlNumber'] ?? '').toString();
+                                ),
+                                columns: const [
+                                  DataColumn(label: Text('Date Received')),
+                                  DataColumn(label: Text('Filing Code')),
+                                  DataColumn(label: Text('Retention Period')),
+                                  DataColumn(label: Text('File Location')),
+                                  DataColumn(label: Text('Disposition Date')),
+                                  DataColumn(label: Text('Control Number')),
+                                  DataColumn(label: Text('Office')),
+                                  DataColumn(label: Text('Particular')),
+                                  DataColumn(label: Text('Forwarded To')),
+                                  DataColumn(label: Text('Received By')),
+                                  DataColumn(label: Text('Comment')),
+                                  DataColumn(label: Text('Action Taken')),
+                                  DataColumn(label: Text('Remarks')),
+                                  DataColumn(label: Text('Status')),
+                                  DataColumn(label: Text('Actions')),
+                                ],
+                                rows: docs.map((doc) {
+                                  final data = doc.data();
+                                  final status = _statusFromData(data);
+                                  final controlNumber =
+                                      (data['controlNumber'] ?? '').toString();
 
-                                    return DataRow(
-                                      cells: [
-                                        DataCell(
-                                          _buildValueCell(
-                                            _formatDate(_extractTimestamp(data)),
-                                            width: 132,
+                                  return DataRow(
+                                    cells: [
+                                      DataCell(
+                                        _buildValueCell(
+                                          _formatDate(_extractTimestamp(data)),
+                                          width: 132,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          _filingCodeFromData(data),
+                                          width: 152,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          _retentionPeriodFromData(data),
+                                          width: 150,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          _fileLocationFromData(data),
+                                          width: 172,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          _dispositionDateFromData(data),
+                                          width: 148,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          controlNumber,
+                                          width: 124,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['office'] ?? '').toString(),
+                                          width: 156,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['particular'] ?? '').toString(),
+                                          width: 220,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['forwardedTo'] ?? '')
+                                              .toString(),
+                                          width: 142,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['receivedBy'] ?? '').toString(),
+                                          width: 156,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['comment'] ?? '').toString(),
+                                          width: 172,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['actionTaken'] ?? '')
+                                              .toString(),
+                                          width: 172,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          (data['remarks'] ?? '').toString(),
+                                          width: 172,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        SizedBox(
+                                          width: 110,
+                                          child: Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: _buildStatusBadge(status),
                                           ),
                                         ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            _filingCodeFromData(data),
-                                            width: 152,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            _retentionPeriodFromData(data),
-                                            width: 150,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            _fileLocationFromData(data),
-                                            width: 172,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            _dispositionDateFromData(data),
-                                            width: 148,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            controlNumber,
-                                            width: 124,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['office'] ?? '').toString(),
-                                            width: 156,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['particular'] ?? '').toString(),
-                                            width: 220,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['forwardedTo'] ?? '')
-                                                .toString(),
-                                            width: 142,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['receivedBy'] ?? '')
-                                                .toString(),
-                                            width: 156,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['comment'] ?? '').toString(),
-                                            width: 172,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['actionTaken'] ?? '')
-                                                .toString(),
-                                            width: 172,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          _buildValueCell(
-                                            (data['remarks'] ?? '').toString(),
-                                            width: 172,
-                                          ),
-                                        ),
-                                        DataCell(
-                                          SizedBox(
-                                            width: 110,
-                                            child: Align(
-                                              alignment: Alignment.centerLeft,
-                                              child: _buildStatusBadge(status),
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          SizedBox(
-                                            width: 132,
-                                            child: Row(
-                                              children: [
-                                                Tooltip(
-                                                  message: 'Approve document',
-                                                  child: Material(
-                                                    color: Colors.transparent,
-                                                    child: InkWell(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
+                                      ),
+                                      DataCell(
+                                        SizedBox(
+                                          width: 132,
+                                          child: Row(
+                                            children: [
+                                              Tooltip(
+                                                message: 'Approve document',
+                                                child: Material(
+                                                  color: Colors.transparent,
+                                                  child: InkWell(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                    onTap: status == 'approved'
+                                                        ? null
+                                                        : () => _confirmApprove(
+                                                            doc.id,
+                                                            controlNumber,
+                                                          ),
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
                                                             10,
                                                           ),
-                                                      onTap: () => _confirmApprove(
-                                                        doc.id,
-                                                        controlNumber,
-                                                      ),
-                                                      child: Container(
-                                                        padding:
-                                                            const EdgeInsets.all(
+                                                      decoration: BoxDecoration(
+                                                        color: _successColor
+                                                            .withOpacity(
+                                                              _isDark
+                                                                  ? 0.24
+                                                                  : 0.12,
+                                                            ),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
                                                               10,
                                                             ),
-                                                        decoration: BoxDecoration(
+                                                        border: Border.all(
                                                           color: _successColor
                                                               .withOpacity(
-                                                                _isDark
-                                                                    ? 0.24
-                                                                    : 0.12,
+                                                                0.35,
                                                               ),
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(10),
-                                                          border: Border.all(
-                                                            color: _successColor
-                                                                .withOpacity(
-                                                                  0.35,
-                                                                ),
-                                                          ),
                                                         ),
-                                                        child: const Icon(
-                                                          Icons.check,
-                                                          color: _successColor,
-                                                          size: 20,
-                                                        ),
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons.check,
+                                                        color: _successColor,
+                                                        size: 20,
                                                       ),
                                                     ),
                                                   ),
                                                 ),
-                                                const SizedBox(width: 10),
-                                                Tooltip(
-                                                  message: 'Reject document',
-                                                  child: Material(
-                                                    color: Colors.transparent,
-                                                    child: InkWell(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
+                                              ),
+                                              const SizedBox(width: 10),
+                                              Tooltip(
+                                                message: 'Reject document',
+                                                child: Material(
+                                                  color: Colors.transparent,
+                                                  child: InkWell(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                    onTap: status == 'rejected'
+                                                        ? null
+                                                        : () => _confirmReject(
+                                                            doc.id,
+                                                            controlNumber,
+                                                          ),
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
                                                             10,
                                                           ),
-                                                      onTap: () => _confirmReject(
-                                                        doc.id,
-                                                        controlNumber,
-                                                      ),
-                                                      child: Container(
-                                                        padding:
-                                                            const EdgeInsets.all(
+                                                      decoration: BoxDecoration(
+                                                        color: _dangerColor
+                                                            .withOpacity(
+                                                              _isDark
+                                                                  ? 0.24
+                                                                  : 0.12,
+                                                            ),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
                                                               10,
                                                             ),
-                                                        decoration: BoxDecoration(
+                                                        border: Border.all(
                                                           color: _dangerColor
                                                               .withOpacity(
-                                                                _isDark
-                                                                    ? 0.24
-                                                                    : 0.12,
+                                                                0.35,
                                                               ),
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(10),
-                                                          border: Border.all(
-                                                            color: _dangerColor
-                                                                .withOpacity(
-                                                                  0.35,
-                                                                ),
-                                                          ),
                                                         ),
-                                                        child: const Icon(
-                                                          Icons.close,
-                                                          color: _dangerColor,
-                                                          size: 20,
-                                                        ),
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons.close,
+                                                        color: _dangerColor,
+                                                        size: 20,
                                                       ),
                                                     ),
                                                   ),
                                                 ),
-                                              ],
-                                            ),
+                                              ),
+                                              const SizedBox(width: 10),
+                                              Tooltip(
+                                                message: 'Print routing slip',
+                                                child: Material(
+                                                  color: Colors.transparent,
+                                                  child: InkWell(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                    onTap: () =>
+                                                        exportRoutingSlipPdf(
+                                                          data,
+                                                        ),
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                            10,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: _primaryColor
+                                                            .withOpacity(
+                                                              _isDark
+                                                                  ? 0.24
+                                                                  : 0.12,
+                                                            ),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              10,
+                                                            ),
+                                                        border: Border.all(
+                                                          color: _primaryColor
+                                                              .withOpacity(
+                                                                0.35,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons.print_outlined,
+                                                        color: _primaryColor,
+                                                        size: 20,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                      ],
-                                    );
-                                  }).toList(),
-                                ),
+                                      ),
+                                    ],
+                                  );
+                                }).toList(),
+                              ),
                             ),
                           ),
                         );
@@ -1065,7 +1363,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       child: Padding(
                         padding: const EdgeInsets.all(24),
                         child: Text(
-                          'Error loading pending documents: ${snapshot.error}',
+                          'Error loading documents: ${snapshot.error}',
                           style: TextStyle(color: _primaryText),
                           textAlign: TextAlign.center,
                         ),
@@ -1074,9 +1372,20 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                   }
 
                   final query = _searchText.trim().toLowerCase();
+                  final selectedStatus = _selectedRegistryStatus;
+                  final allStatusDocs = snapshot.data?.docs ?? [];
+                  final pendingDocs = allStatusDocs
+                      .where((doc) => _statusFromData(doc.data()) == 'pending')
+                      .toList();
+                  final approvedDocs = allStatusDocs
+                      .where((doc) => _statusFromData(doc.data()) == 'approved')
+                      .toList();
+                  final rejectedDocs = allStatusDocs
+                      .where((doc) => _statusFromData(doc.data()) == 'rejected')
+                      .toList();
                   final allDocs = (snapshot.data?.docs ?? []).where((doc) {
                     final status = _statusFromData(doc.data());
-                    return status == 'pending';
+                    return status == selectedStatus;
                   }).toList();
                   final docs = allDocs.where((doc) {
                     if (query.isEmpty) {
@@ -1131,7 +1440,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                                 width: statCardWidth,
                                 child: _SupervisorStatCard(
                                   title: 'Pending Queue',
-                                  value: '${allDocs.length}',
+                                  value: '${pendingDocs.length}',
                                   subtitle: 'Documents waiting for approval',
                                   icon: Icons.pending_actions_outlined,
                                   highlightColor: _warningColor,
@@ -1141,10 +1450,10 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                               SizedBox(
                                 width: statCardWidth,
                                 child: _SupervisorStatCard(
-                                  title: 'With Attachment',
-                                  value: '${_countWithAttachments(allDocs)}',
-                                  subtitle: 'Pending records with uploaded files',
-                                  icon: Icons.attach_file_outlined,
+                                  title: 'Approved',
+                                  value: '${approvedDocs.length}',
+                                  subtitle: 'Records approved by supervisor',
+                                  icon: Icons.check_circle_outline,
                                   highlightColor: const Color(0xFF295C88),
                                   darkMode: _isDark,
                                 ),
@@ -1152,11 +1461,11 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                               SizedBox(
                                 width: statCardWidth,
                                 child: _SupervisorStatCard(
-                                  title: 'Without Action Taken',
-                                  value: '${_countAwaitingAction(allDocs)}',
-                                  subtitle: 'Pending records still lacking action',
-                                  icon: Icons.fact_check_outlined,
-                                  highlightColor: _successColor,
+                                  title: 'Rejected',
+                                  value: '${rejectedDocs.length}',
+                                  subtitle: 'Records rejected by supervisor',
+                                  icon: Icons.cancel_outlined,
+                                  highlightColor: _dangerColor,
                                   darkMode: _isDark,
                                 ),
                               ),

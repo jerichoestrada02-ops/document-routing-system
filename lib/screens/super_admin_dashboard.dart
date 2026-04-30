@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 class SuperAdminDashboard extends StatefulWidget {
   const SuperAdminDashboard({super.key});
@@ -14,8 +16,7 @@ class SuperAdminDashboard extends StatefulWidget {
 }
 
 class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
-  static const String _allowedAttachmentTypes =
-      '.pdf,.doc,.docx,.xls,.xlsx';
+  static const String _allowedAttachmentTypes = '.pdf,.doc,.docx,.xls,.xlsx';
   static const List<String> _forwardedToOptions = [
     'Admin',
     'Procurement',
@@ -60,9 +61,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   final _formKey = GlobalKey<FormState>();
 
   String _searchText = '';
-  String _exportFilter = 'Week';
+  String _exportFilter = 'All';
   String? _selectedForwardedTo;
   String? _selectedFilingCode;
+  String? _selectedFilingSubCategory;
   String? _selectedRetentionPeriod;
   String _selectedPdfDataUrl = '';
   List<String> _filingCodeOptions = [];
@@ -220,6 +222,34 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     return legacyCode.split(' - ').first.trim();
   }
 
+  String _filingSubCategoryFromData(Map<String, dynamic> data) {
+    final subCategory = (data['filingSubCategory'] ?? data['subCategory'] ?? '')
+        .toString()
+        .trim();
+    if (subCategory.isNotEmpty) {
+      return subCategory;
+    }
+
+    final legacyCode = (data['rdsCode'] ?? '').toString().trim();
+    if (!legacyCode.contains(' - ')) {
+      return '';
+    }
+
+    return legacyCode.split(' - ').skip(1).join(' - ').trim();
+  }
+
+  String _filingCodeWithSubCategory(
+    Map<String, dynamic> data, {
+    String separator = ' - ',
+  }) {
+    final filingCode = _filingCodeFromData(data);
+    final subCategory = _filingSubCategoryFromData(data);
+    return [
+      filingCode,
+      subCategory,
+    ].where((value) => value.trim().isNotEmpty).join(separator);
+  }
+
   String _dispositionDateFromData(Map<String, dynamic> data) {
     final storedDisposition = data['dispositionDate'];
     if (storedDisposition is Timestamp) {
@@ -296,6 +326,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     }
 
     final filingCode = _selectedFilingCode?.trim() ?? '';
+    final filingSubCategory = _selectedFilingSubCategory?.trim() ?? '';
     final retentionPeriod = _selectedRetentionPeriod?.trim() ?? '';
     final dispositionDate = _calculateDispositionDate(
       _selectedDateReceived,
@@ -310,6 +341,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         'dateReceived': receivedTimestamp,
         'date': receivedTimestamp,
         'filingCode': _nullableString(filingCode),
+        'filingSubCategory': _nullableString(filingSubCategory),
         'retentionPeriod': _nullableString(retentionPeriod),
         'dispositionDate': retentionPeriod.toLowerCase() == 'permanent'
             ? 'Permanent'
@@ -369,6 +401,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       _selectedDateReceived = null;
       _selectedForwardedTo = null;
       _selectedFilingCode = null;
+      _selectedFilingSubCategory = null;
       _selectedRetentionPeriod = null;
       _filingCodeOptions = [];
       _isConfidential = false;
@@ -404,15 +437,54 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     return options.toList()..sort();
   }
 
+  List<String> _buildFilingSubCategoryOptions(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String? filingCode,
+  ) {
+    final normalizedFilingCode = filingCode?.trim();
+    if (normalizedFilingCode == null || normalizedFilingCode.isEmpty) {
+      return [];
+    }
+
+    final options = <String>{};
+    for (final doc in docs) {
+      final data = doc.data();
+      final name = (data['name'] ?? '').toString().trim();
+      if (name != normalizedFilingCode) {
+        continue;
+      }
+
+      final subcategories = data['subcategories'];
+      if (subcategories is Iterable) {
+        for (final subcategory in subcategories) {
+          final value = subcategory.toString().trim();
+          if (value.isNotEmpty) {
+            options.add(value);
+          }
+        }
+      }
+    }
+
+    return options.toList()..sort();
+  }
+
   void _syncFilingCodeSelectionFromOptions(List<String> options) {
     _filingCodeOptions = options;
 
     if (_selectedFilingCode != null &&
         !_filingCodeOptions.contains(_selectedFilingCode)) {
       _selectedFilingCode = null;
+      _selectedFilingSubCategory = null;
     }
 
     _filingCodeController.text = _selectedFilingCode ?? '';
+  }
+
+  void _syncFilingSubCategorySelectionFromOptions(List<String> options) {
+    if (_selectedFilingSubCategory != null &&
+        !options.contains(_selectedFilingSubCategory)) {
+      _selectedFilingSubCategory = null;
+    }
   }
 
   Future<void> _showAddRdsMainDialog(
@@ -520,13 +592,134 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     mainController.dispose();
   }
 
+  Future<void> _showAddRdsSubCategoryDialog(
+    void Function(VoidCallback fn) setDialogState,
+  ) async {
+    final filingCode = _selectedFilingCode?.trim();
+    if (filingCode == null || filingCode.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select a filing code before adding a sub category.'),
+          backgroundColor: _warningColor,
+        ),
+      );
+      return;
+    }
+
+    final subCategoryController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _isDark
+            ? const Color(0xFF161E27)
+            : const Color(0xFFFBF9F5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'Add Sub Category',
+          style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: subCategoryController,
+              decoration: _dialogInputDecoration(
+                'Sub Category',
+                hintText: filingCode,
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Required';
+                }
+                return null;
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (!(formKey.currentState?.validate() ?? false)) {
+                return;
+              }
+
+              final subCategory = subCategoryController.text.trim();
+
+              try {
+                final existing = await FirebaseFirestore.instance
+                    .collection('rds_options')
+                    .where('name', isEqualTo: filingCode)
+                    .limit(1)
+                    .get();
+
+                if (existing.docs.isNotEmpty) {
+                  await FirebaseFirestore.instance
+                      .collection('rds_options')
+                      .doc(existing.docs.first.id)
+                      .update({
+                        'subcategories': FieldValue.arrayUnion([subCategory]),
+                      });
+                }
+
+                setDialogState(() {
+                  _selectedFilingSubCategory = subCategory;
+                });
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Sub category added successfully.'),
+                      backgroundColor: _successColor,
+                    ),
+                  );
+                }
+
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: $e'),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primaryColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    subCategoryController.dispose();
+  }
+
   Widget _buildRdsCodeDropdowns(void Function(VoidCallback fn) setDialogState) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance.collection('rds_options').snapshots(),
       builder: (context, snapshot) {
         final docs = snapshot.data?.docs ?? [];
         final options = _buildFilingCodeOptions(docs);
+        final subCategoryOptions = _buildFilingSubCategoryOptions(
+          docs,
+          _selectedFilingCode,
+        );
         _syncFilingCodeSelectionFromOptions(options);
+        _syncFilingSubCategorySelectionFromOptions(subCategoryOptions);
 
         final isLoading =
             snapshot.connectionState == ConnectionState.waiting &&
@@ -556,11 +749,14 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         : (value) {
                             setDialogState(() {
                               _selectedFilingCode = value;
+                              _selectedFilingSubCategory = null;
                               _filingCodeController.text = value ?? '';
                             });
                           },
                     hint: Text(
-                      isLoading ? 'Loading filing codes...' : 'Select filing code',
+                      isLoading
+                          ? 'Loading filing codes...'
+                          : 'Select filing code',
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
@@ -574,7 +770,45 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value:
-                        _retentionPeriodOptions.contains(_selectedRetentionPeriod)
+                        subCategoryOptions.contains(_selectedFilingSubCategory)
+                        ? _selectedFilingSubCategory
+                        : null,
+                    decoration: _dialogInputDecoration('Sub Category'),
+                    items: subCategoryOptions
+                        .map(
+                          (option) => DropdownMenuItem<String>(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: isLoading || subCategoryOptions.isEmpty
+                        ? null
+                        : (value) {
+                            setDialogState(() {
+                              _selectedFilingSubCategory = value;
+                            });
+                          },
+                    hint: Text(
+                      _selectedFilingCode == null
+                          ? 'Select filing code first'
+                          : isLoading
+                          ? 'Loading sub categories...'
+                          : 'Select sub category',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value:
+                        _retentionPeriodOptions.contains(
+                          _selectedRetentionPeriod,
+                        )
                         ? _selectedRetentionPeriod
                         : null,
                     decoration: _dialogInputDecoration('Retention Period'),
@@ -625,6 +859,15 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                   label: const Text('Add Filing Code'),
                   style: TextButton.styleFrom(foregroundColor: _primaryColor),
                 ),
+                const SizedBox(width: 12),
+                TextButton.icon(
+                  onPressed: _selectedFilingCode == null
+                      ? null
+                      : () => _showAddRdsSubCategoryDialog(setDialogState),
+                  icon: const Icon(Icons.add_circle_outline),
+                  label: const Text('Add Sub Category'),
+                  style: TextButton.styleFrom(foregroundColor: _primaryColor),
+                ),
               ],
             ),
             if (_filingCodeOptions.isEmpty && !isLoading && !snapshot.hasError)
@@ -665,6 +908,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       if (field == 'dateReceived') {
         updates['date'] = valueToUpdate;
       }
+      if (field == 'filingCode') {
+        updates['filingSubCategory'] = null;
+      }
 
       if (field == 'retentionPeriod') {
         effectiveRetentionPeriod = newValue.trim();
@@ -679,8 +925,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         effectiveDateReceived ??= _extractTimestamp(data)?.toDate();
         effectiveRetentionPeriod ??= _retentionPeriodFromData(data);
 
-        final normalizedRetention =
-            (effectiveRetentionPeriod ?? '').trim().toLowerCase();
+        final normalizedRetention = (effectiveRetentionPeriod ?? '')
+            .trim()
+            .toLowerCase();
         if (normalizedRetention == 'permanent') {
           updates['dispositionDate'] = 'Permanent';
         } else {
@@ -698,6 +945,31 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           .collection('documents')
           .doc(docId)
           .update(updates);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _updateFilingCodeDetails(
+    String docId,
+    String filingCode,
+    String? filingSubCategory,
+  ) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(docId)
+          .update({
+            'filingCode': _nullableString(filingCode),
+            'filingSubCategory': _nullableString(filingSubCategory ?? ''),
+          });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -764,6 +1036,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   }
 
   DateTimeRange _rangeForFilter(String filter, DateTime anchorDate) {
+    if (filter == 'All') {
+      return DateTimeRange(start: DateTime(2000), end: DateTime(2100, 12, 31));
+    }
+
     if (filter == 'Week') {
       final start = DateTime(
         anchorDate.year,
@@ -826,6 +1102,218 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     }
   }
 
+  String _routingSlipValue(Map<String, dynamic> data, String field) {
+    return (data[field] ?? '').toString().trim();
+  }
+
+  String _safePdfFileName(String value) {
+    final sanitized = value
+        .trim()
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+    return sanitized.isEmpty ? 'document' : sanitized;
+  }
+
+  Future<void> exportRoutingSlipPdf(Map<String, dynamic> data) async {
+    final pdf = pw.Document();
+    final dateReceived = _formatDate(_extractTimestamp(data));
+    final controlNumber = _routingSlipValue(data, 'controlNumber');
+    final office = _routingSlipValue(data, 'office');
+    final particular = _routingSlipValue(data, 'particular');
+    final comment = _routingSlipValue(data, 'comment');
+    final receivedBy = _routingSlipValue(data, 'receivedBy');
+
+    pw.Widget labeledLine(String label, String value) {
+      return pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        children: [
+          pw.Text(
+            label,
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(width: 5),
+          pw.Expanded(
+            child: pw.Container(
+              padding: const pw.EdgeInsets.only(bottom: 2),
+              decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                  bottom: pw.BorderSide(width: 0.6, color: PdfColors.black),
+                ),
+              ),
+              child: pw.Text(value, style: const pw.TextStyle(fontSize: 9)),
+            ),
+          ),
+        ],
+      );
+    }
+
+    pw.Widget checkbox(String label) {
+      return pw.Padding(
+        padding: const pw.EdgeInsets.only(bottom: 6),
+        child: pw.Row(
+          children: [
+            pw.Container(
+              width: 10,
+              height: 10,
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(width: 0.8, color: PdfColors.black),
+              ),
+            ),
+            pw.SizedBox(width: 6),
+            pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
+          ],
+        ),
+      );
+    }
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a5.landscape,
+        margin: const pw.EdgeInsets.all(18),
+        build: (context) {
+          return pw.Container(
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(width: 1.2, color: PdfColors.black),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Center(
+                  child: pw.Column(
+                    children: [
+                      pw.Text(
+                        'GENERAL SERVICES OFFICE',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                      pw.SizedBox(height: 2),
+                      pw.Text(
+                        'City Government',
+                        style: const pw.TextStyle(fontSize: 10),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'ROUTING SLIP',
+                        style: pw.TextStyle(
+                          fontSize: 15,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: labeledLine('Communication No:', controlNumber),
+                    ),
+                    pw.SizedBox(width: 18),
+                    pw.Expanded(child: labeledLine('Date:', dateReceived)),
+                  ],
+                ),
+                pw.SizedBox(height: 9),
+                labeledLine('From:', office),
+                pw.SizedBox(height: 8),
+                labeledLine('Subject:', particular),
+                pw.SizedBox(height: 12),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          checkbox('For Information'),
+                          checkbox('Prepare reply'),
+                          checkbox('Note and file'),
+                          checkbox('For investigation & report'),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 22),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          checkbox('For verification'),
+                          checkbox('For appropriate action'),
+                          checkbox('Signature'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 8),
+                pw.Text(
+                  'Comment',
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Container(
+                  height: 56,
+                  padding: const pw.EdgeInsets.all(6),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(width: 0.8, color: PdfColors.black),
+                  ),
+                  child: pw.Text(
+                    comment,
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ),
+                pw.Spacer(),
+                pw.Row(
+                  children: [
+                    pw.Expanded(child: labeledLine('Received By:', receivedBy)),
+                    pw.SizedBox(width: 24),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.center,
+                        children: [
+                          pw.Text(
+                            'EUGENE D. BUYUCAN',
+                            style: pw.TextStyle(
+                              fontSize: 12,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(height: 2),
+                          pw.Text(
+                            'City General Services Officer',
+                            style: const pw.TextStyle(fontSize: 8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    final bytes = await pdf.save();
+    final fileName = 'routing_slip_${_safePdfFileName(controlNumber)}.pdf';
+    final blob = html.Blob([bytes], 'application/pdf');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute('download', fileName)
+      ..style.display = 'none';
+
+    html.document.body?.children.add(anchor);
+    anchor.click();
+    anchor.remove();
+    html.Url.revokeObjectUrl(url);
+  }
+
   Future<void> _exportCSV(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) async {
@@ -852,6 +1340,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       ],
     ];
 
+    final exportAll = _exportFilter == 'All';
     final activeRange = _exportFilter == 'Custom Range'
         ? _selectedExportRange
         : _rangeForFilter(_exportFilter, _selectedExportRange.start);
@@ -859,20 +1348,20 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     for (final doc in docs) {
       final data = doc.data();
       final timestamp = _extractTimestamp(data);
-      if (timestamp == null) {
-        continue;
-      }
-
-      final date = timestamp.toDate();
-      final normalizedDate = DateTime(date.year, date.month, date.day);
+      final date = timestamp?.toDate();
+      final normalizedDate = date == null
+          ? null
+          : DateTime(date.year, date.month, date.day);
       final include =
-          !normalizedDate.isBefore(activeRange.start) &&
-          !normalizedDate.isAfter(activeRange.end);
+          exportAll ||
+          (normalizedDate != null &&
+              !normalizedDate.isBefore(activeRange.start) &&
+              !normalizedDate.isAfter(activeRange.end));
 
       if (include) {
         csvData.add([
-          DateFormat('yyyy-MM-dd').format(date),
-          _filingCodeFromData(data),
+          date == null ? '' : DateFormat('yyyy-MM-dd').format(date),
+          _filingCodeWithSubCategory(data),
           _retentionPeriodFromData(data),
           _fileLocationFromData(data),
           _dispositionDateFromData(data),
@@ -883,30 +1372,42 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           (data['forwardedTo'] ?? '').toString(),
           (data['receivedBy'] ?? '').toString(),
           (data['comment'] ?? '').toString(),
-                      (data['actionTaken'] ?? '').toString(),
-                      (data['adminDocumentFileName'] ?? '').toString(),
-                      (data['remarks'] ?? '').toString(),
-                      _isConfidentialFromData(data) ? 'confidential' : 'open',
-                      _statusFromData(data),
-                      (data['scannedFileUrl'] ?? '').toString(),
+          (data['actionTaken'] ?? '').toString(),
+          (data['adminDocumentFileName'] ?? '').toString(),
+          (data['remarks'] ?? '').toString(),
+          _isConfidentialFromData(data) ? 'confidential' : 'open',
+          _statusFromData(data),
+          (data['scannedFileUrl'] ?? '').toString(),
         ]);
       }
     }
 
+    if (csvData.length == 1 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No records found for the selected export range.'),
+          backgroundColor: _warningColor,
+        ),
+      );
+      return;
+    }
+
     final csv = const ListToCsvConverter().convert(csvData);
-    final bytes = utf8.encode(csv);
+    final bytes = utf8.encode('\ufeff$csv');
     final blob = html.Blob([bytes]);
     final url = html.Url.createObjectUrlFromBlob(blob);
+    final fileFilter = _exportFilter.toLowerCase().replaceAll(' ', '_');
     final anchor = html.AnchorElement(href: url)
-      ..setAttribute(
-        'download',
-        'documents_export_${_exportFilter.toLowerCase()}.csv',
-      )
+      ..setAttribute('download', 'documents_export_$fileFilter.csv')
       ..click();
     html.Url.revokeObjectUrl(url);
   }
 
   String _buildExportDateLabel() {
+    if (_exportFilter == 'All') {
+      return 'All records';
+    }
+
     final activeRange = _exportFilter == 'Custom Range'
         ? _selectedExportRange
         : _rangeForFilter(_exportFilter, _selectedExportRange.start);
@@ -1018,8 +1519,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     String scannedFileUrl = (data['scannedFileUrl'] ?? '').toString();
     String pdfFileName = (data['pdfFileName'] ?? '').toString();
     String adminDocumentUrl = (data['adminDocumentUrl'] ?? '').toString();
-    String adminDocumentFileName =
-        (data['adminDocumentFileName'] ?? '').toString();
+    String adminDocumentFileName = (data['adminDocumentFileName'] ?? '')
+        .toString();
     bool isConfidential = _isConfidentialFromData(data);
 
     await showDialog<void>(
@@ -1029,8 +1530,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           backgroundColor: _isDark
               ? const Color(0xFF161E27)
               : const Color(0xFFFBF9F5),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: Text(
             'Update Registry',
             style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
@@ -1147,8 +1649,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () async {
-                            final attachment =
-                                await _pickRegistryAttachment();
+                            final attachment = await _pickRegistryAttachment();
                             if (attachment == null) return;
                             setDialogState(() {
                               scannedFileUrl = attachment['url'] ?? '';
@@ -1169,13 +1670,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () async {
-                            final attachment =
-                                await _pickRegistryAttachment();
+                            final attachment = await _pickRegistryAttachment();
                             if (attachment == null) return;
                             setDialogState(() {
                               adminDocumentUrl = attachment['url'] ?? '';
-                              adminDocumentFileName =
-                                  attachment['name'] ?? '';
+                              adminDocumentFileName = attachment['name'] ?? '';
                             });
                           },
                           icon: const Icon(Icons.upload_file_outlined),
@@ -1317,6 +1816,155 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     );
   }
 
+  Future<void> _showFilingCodeCellDialog({
+    required String docId,
+    required String currentFilingCode,
+    required String currentSubCategory,
+  }) async {
+    String? selectedFilingCode = currentFilingCode.trim().isEmpty
+        ? null
+        : currentFilingCode;
+    String? selectedSubCategory = currentSubCategory.trim().isEmpty
+        ? null
+        : currentSubCategory;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) =>
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('rds_options')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final docs = snapshot.data?.docs ?? [];
+                final filingCodeOptions = _buildFilingCodeOptions(docs);
+                final subCategoryOptions = _buildFilingSubCategoryOptions(
+                  docs,
+                  selectedFilingCode,
+                );
+                final isLoading =
+                    snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData;
+
+                return AlertDialog(
+                  backgroundColor: _isDark
+                      ? const Color(0xFF161E27)
+                      : const Color(0xFFFBF9F5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  title: Text(
+                    'Filing Code',
+                    style: TextStyle(
+                      color: _primaryText,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  content: SizedBox(
+                    width: 460,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          value: filingCodeOptions.contains(selectedFilingCode)
+                              ? selectedFilingCode
+                              : null,
+                          decoration: _dialogInputDecoration('Filing Code'),
+                          dropdownColor: _cardBackground,
+                          items: filingCodeOptions
+                              .map(
+                                (option) => DropdownMenuItem<String>(
+                                  value: option,
+                                  child: Text(option),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: isLoading || filingCodeOptions.isEmpty
+                              ? null
+                              : (value) {
+                                  setDialogState(() {
+                                    selectedFilingCode = value;
+                                    selectedSubCategory = null;
+                                  });
+                                },
+                          hint: Text(
+                            isLoading
+                                ? 'Loading filing codes...'
+                                : 'Select filing code',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value:
+                              subCategoryOptions.contains(selectedSubCategory)
+                              ? selectedSubCategory
+                              : null,
+                          decoration: _dialogInputDecoration('Sub Category'),
+                          dropdownColor: _cardBackground,
+                          items: subCategoryOptions
+                              .map(
+                                (option) => DropdownMenuItem<String>(
+                                  value: option,
+                                  child: Text(option),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: isLoading || subCategoryOptions.isEmpty
+                              ? null
+                              : (value) {
+                                  setDialogState(() {
+                                    selectedSubCategory = value;
+                                  });
+                                },
+                          hint: Text(
+                            selectedFilingCode == null
+                                ? 'Select filing code first'
+                                : 'Select sub category',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text(
+                        'Close',
+                        style: TextStyle(color: _primaryColor),
+                      ),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          selectedFilingCode == null ||
+                              (selectedFilingCode == currentFilingCode &&
+                                  (selectedSubCategory ?? '') ==
+                                      currentSubCategory)
+                          ? null
+                          : () async {
+                              await _updateFilingCodeDetails(
+                                docId,
+                                selectedFilingCode!,
+                                selectedSubCategory,
+                              );
+                              if (mounted) {
+                                Navigator.pop(dialogContext);
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _accentColor,
+                        foregroundColor: Colors.black87,
+                      ),
+                      child: const Text('Save'),
+                    ),
+                  ],
+                );
+              },
+            ),
+      ),
+    );
+  }
+
   Widget _buildEditableCell(
     String docId,
     String field,
@@ -1362,23 +2010,24 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
 
   Widget _buildFilingCodeEditableCell(
     String docId,
-    String value, {
-    required String label,
+    String filingCode,
+    String subCategory, {
     double width = 96,
   }) {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance.collection('rds_options').snapshots(),
-      builder: (context, snapshot) {
-        final options = _buildFilingCodeOptions(snapshot.data?.docs ?? []);
-        return _buildDropdownEditableCell(
-          docId,
-          'filingCode',
-          value,
-          label: label,
-          options: options,
-          width: width,
-        );
-      },
+    final displayValue = [
+      filingCode,
+      subCategory,
+    ].where((value) => value.trim().isNotEmpty).join('\n');
+
+    return _buildCellCard(
+      displayValue,
+      width: width,
+      onTap: () => _showFilingCodeCellDialog(
+        docId: docId,
+        currentFilingCode: filingCode,
+        currentSubCategory: subCategory,
+      ),
+      showEditIcon: true,
     );
   }
 
@@ -1511,20 +2160,24 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         final maxExtent = hasClients
             ? _tableHorizontalController.position.maxScrollExtent
             : 0.0;
-        final canScroll = maxExtent > 0;
         final canScrollLeft =
             hasClients && _tableHorizontalController.offset > 0;
         final canScrollRight =
             hasClients && _tableHorizontalController.offset < maxExtent;
 
         void scrollBy(double delta) {
-          if (!canScroll) {
+          if (!_tableHorizontalController.hasClients) {
             return;
           }
 
-          final target = (_tableHorizontalController.offset + delta).clamp(
+          final position = _tableHorizontalController.position;
+          if (position.maxScrollExtent <= 0) {
+            return;
+          }
+
+          final target = (position.pixels + delta).clamp(
             0.0,
-            maxExtent,
+            position.maxScrollExtent,
           );
           _tableHorizontalController.animateTo(
             target,
@@ -1544,18 +2197,18 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                onPressed: canScrollLeft ? () => scrollBy(-520) : null,
+                onPressed: () => scrollBy(-520),
                 icon: const Icon(Icons.chevron_left),
                 tooltip: 'Scroll left',
-                color: _primaryColor,
+                color: canScrollLeft ? _primaryColor : _secondaryText,
                 splashRadius: 18,
               ),
               const SizedBox(width: 4),
               IconButton(
-                onPressed: canScrollRight ? () => scrollBy(520) : null,
+                onPressed: () => scrollBy(520),
                 icon: const Icon(Icons.chevron_right),
                 tooltip: 'Scroll right',
-                color: _primaryColor,
+                color: canScrollRight ? _primaryColor : _secondaryText,
                 splashRadius: 18,
               ),
             ],
@@ -1617,8 +2270,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
       // Keep download available even if tracking update fails.
     }
 
-    final sanitizedFileName =
-        fileName.trim().isNotEmpty ? fileName.trim() : 'document';
+    final sanitizedFileName = fileName.trim().isNotEmpty
+        ? fileName.trim()
+        : 'document';
 
     final anchor = html.AnchorElement(href: fileUrl)
       ..setAttribute('download', sanitizedFileName)
@@ -1680,10 +2334,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     reader.readAsDataUrl(file);
     await reader.onLoad.first;
 
-    return {
-      'url': reader.result?.toString() ?? '',
-      'name': file.name,
-    };
+    return {'url': reader.result?.toString() ?? '', 'name': file.name};
   }
 
   InputDecoration _dialogInputDecoration(
@@ -1926,9 +2577,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     const SizedBox(height: 14),
                     TextFormField(
                       controller: _fileLocationAfterRetentionController,
-                      decoration: _dialogInputDecoration(
-                        'File Location',
-                      ),
+                      decoration: _dialogInputDecoration('File Location'),
                       maxLines: 2,
                     ),
                     const SizedBox(height: 14),
@@ -2156,7 +2805,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     );
   }
 
-  Widget _buildToolbar(BuildContext context) {
+  Widget _buildToolbar(
+    BuildContext context,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -2224,7 +2876,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                   iconEnabledColor: _primaryColor,
                   dropdownColor: _cardBackground,
                   style: TextStyle(color: _primaryText),
-                  items: ['Week', 'Month', 'Year', 'Custom Range']
+                  items: ['All', 'Week', 'Month', 'Year', 'Custom Range']
                       .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                       .toList(),
                   onChanged: (value) {
@@ -2248,11 +2900,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               ),
               ElevatedButton.icon(
                 onPressed: () async {
-                  final snapshot = await FirebaseFirestore.instance
-                      .collection('documents')
-                      .orderBy('controlNumber')
-                      .get();
-                  await _exportCSV(snapshot.docs);
+                  await _exportCSV(docs);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _accentColor,
@@ -2404,9 +3052,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     thumbVisibility: true,
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        final tableMinWidth = constraints.maxWidth > 2680
+                        final tableMinWidth = constraints.maxWidth > 2740
                             ? constraints.maxWidth
-                            : 2680.0;
+                            : 2740.0;
 
                         return SingleChildScrollView(
                           controller: _tableVerticalController,
@@ -2415,357 +3063,376 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                             controller: _tableHorizontalController,
                             scrollDirection: Axis.horizontal,
                             child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  minWidth: tableMinWidth,
+                              constraints: BoxConstraints(
+                                minWidth: tableMinWidth,
+                              ),
+                              child: DataTable(
+                                columnSpacing: 18,
+                                horizontalMargin: 16,
+                                dataRowMinHeight: 70,
+                                dataRowMaxHeight: 86,
+                                headingRowHeight: 58,
+                                dividerThickness: 0.6,
+                                headingTextStyle: TextStyle(
+                                  color: _primaryText,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                child: DataTable(
-                              columnSpacing: 18,
-                              horizontalMargin: 16,
-                              dataRowMinHeight: 70,
-                              dataRowMaxHeight: 86,
-                              headingRowHeight: 58,
-                              dividerThickness: 0.6,
-                              headingTextStyle: TextStyle(
-                                color: _primaryText,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              headingRowColor: WidgetStateProperty.all(
-                                _tableHeaderBackground,
-                              ),
-                              border: TableBorder(
-                                horizontalInside: BorderSide(
-                                  color: _effectiveBorder,
+                                headingRowColor: WidgetStateProperty.all(
+                                  _tableHeaderBackground,
                                 ),
-                              ),
-                              columns: [
-                                DataColumn(label: Text('Date Received')),
-                                DataColumn(label: Text('Filing Code')),
-                                DataColumn(label: Text('Retention Period')),
-                                DataColumn(label: Text('File Location')),
-                                DataColumn(label: Text('Disposition Date')),
-                                DataColumn(label: Text('Control Number')),
-                                DataColumn(label: Text('Office')),
-                                DataColumn(label: Text('Particular')),
-                                DataColumn(label: Text('Received Document')),
-                                DataColumn(label: Text('Forwarded To')),
-                                DataColumn(label: Text('Received By')),
-                                DataColumn(label: Text('Comment')),
-                                DataColumn(label: Text('Action Taken')),
-                                DataColumn(label: Text('Document')),
-                                DataColumn(label: Text('Remarks')),
-                                DataColumn(label: Text('Access')),
-                                DataColumn(label: Text('Status')),
-                                DataColumn(label: Text('Actions')),
-                              ],
-                              rows: docs.map((doc) {
-                                final data = doc.data();
-                                return DataRow(
-                                  cells: [
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'dateReceived',
-                                        _formatDate(_extractTimestamp(data)),
-                                        width: 132,
+                                border: TableBorder(
+                                  horizontalInside: BorderSide(
+                                    color: _effectiveBorder,
+                                  ),
+                                ),
+                                columns: [
+                                  DataColumn(label: Text('Date Received')),
+                                  DataColumn(label: Text('Filing Code')),
+                                  DataColumn(label: Text('Retention Period')),
+                                  DataColumn(label: Text('File Location')),
+                                  DataColumn(label: Text('Disposition Date')),
+                                  DataColumn(label: Text('Control Number')),
+                                  DataColumn(label: Text('Office')),
+                                  DataColumn(label: Text('Particular')),
+                                  DataColumn(label: Text('Received Document')),
+                                  DataColumn(label: Text('Forwarded To')),
+                                  DataColumn(label: Text('Received By')),
+                                  DataColumn(label: Text('Comment')),
+                                  DataColumn(label: Text('Action Taken')),
+                                  DataColumn(label: Text('Document')),
+                                  DataColumn(label: Text('Remarks')),
+                                  DataColumn(label: Text('Access')),
+                                  DataColumn(label: Text('Status')),
+                                  DataColumn(label: Text('Actions')),
+                                ],
+                                rows: docs.map((doc) {
+                                  final data = doc.data();
+                                  final filingCode = _filingCodeFromData(data);
+                                  return DataRow(
+                                    cells: [
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'dateReceived',
+                                          _formatDate(_extractTimestamp(data)),
+                                          width: 132,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildFilingCodeEditableCell(
-                                        doc.id,
-                                        _filingCodeFromData(data),
-                                        label: 'Filing Code',
-                                        width: 152,
+                                      DataCell(
+                                        _buildFilingCodeEditableCell(
+                                          doc.id,
+                                          filingCode,
+                                          _filingSubCategoryFromData(data),
+                                          width: 210,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildDropdownEditableCell(
-                                        doc.id,
-                                        'retentionPeriod',
-                                        _retentionPeriodFromData(data),
-                                        label: 'Retention Period',
-                                        options: _retentionPeriodOptions,
-                                        width: 150,
+                                      DataCell(
+                                        _buildDropdownEditableCell(
+                                          doc.id,
+                                          'retentionPeriod',
+                                          _retentionPeriodFromData(data),
+                                          label: 'Retention Period',
+                                          options: _retentionPeriodOptions,
+                                          width: 150,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'fileLocation',
-                                        _fileLocationFromData(data),
-                                        label: 'File Location',
-                                        width: 172,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'fileLocation',
+                                          _fileLocationFromData(data),
+                                          label: 'File Location',
+                                          width: 172,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildReadOnlyCell(
-                                        _dispositionDateFromData(data),
-                                        label: 'Disposition Date',
-                                        width: 148,
+                                      DataCell(
+                                        _buildReadOnlyCell(
+                                          _dispositionDateFromData(data),
+                                          label: 'Disposition Date',
+                                          width: 148,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'controlNumber',
-                                        (data['controlNumber'] ?? '')
-                                            .toString(),
-                                        width: 124,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'controlNumber',
+                                          (data['controlNumber'] ?? '')
+                                              .toString(),
+                                          width: 124,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'office',
-                                        (data['office'] ?? '').toString(),
-                                        width: 156,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'office',
+                                          (data['office'] ?? '').toString(),
+                                          width: 156,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'particular',
-                                        (data['particular'] ?? '').toString(),
-                                        width: 220,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'particular',
+                                          (data['particular'] ?? '').toString(),
+                                          width: 220,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      SizedBox(
-                                        width: 172,
-                                        child: Builder(
-                                          builder: (context) {
-                                            final hasBeenDownloaded =
-                                                data['hasBeenDownloaded'] ==
-                                                true;
-                                            final downloadLabelColor =
-                                                hasBeenDownloaded
-                                                ? Colors.blue.shade700
-                                                : null;
+                                      DataCell(
+                                        SizedBox(
+                                          width: 172,
+                                          child: Builder(
+                                            builder: (context) {
+                                              final hasBeenDownloaded =
+                                                  data['hasBeenDownloaded'] ==
+                                                  true;
+                                              final downloadLabelColor =
+                                                  hasBeenDownloaded
+                                                  ? Colors.blue.shade700
+                                                  : null;
 
-                                            return (data['scannedFileUrl'] ??
-                                                        '')
-                                                    .toString()
-                                                    .trim()
-                                                    .isEmpty
-                                                ? Text(
-                                                    'No attachment',
-                                                    style: TextStyle(
-                                                      color: _secondaryText,
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                    ),
-                                                  )
-                                                : TextButton.icon(
-                                                    onPressed: () async =>
-                                                        _downloadAttachment(
-                                                          doc.id,
-                                                          (data['scannedFileUrl'] ??
-                                                                  '')
-                                                              .toString(),
-                                                          (data['pdfFileName'] ??
-                                                                  '')
-                                                              .toString(),
-                                                        ),
-                                                    style: TextButton.styleFrom(
-                                                      foregroundColor:
-                                                          downloadLabelColor,
-                                                    ),
-                                                    icon: Icon(
-                                                      Icons
-                                                          .download_for_offline_outlined,
-                                                      size: 18,
-                                                      color: downloadLabelColor,
-                                                    ),
-                                                    label: SizedBox(
-                                                      width: 140,
-                                                      child: Text(
-                                                        ((data['pdfFileName'] ??
+                                              return (data['scannedFileUrl'] ??
+                                                          '')
+                                                      .toString()
+                                                      .trim()
+                                                      .isEmpty
+                                                  ? Text(
+                                                      'No attachment',
+                                                      style: TextStyle(
+                                                        color: _secondaryText,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                      ),
+                                                    )
+                                                  : TextButton.icon(
+                                                      onPressed: () async =>
+                                                          _downloadAttachment(
+                                                            doc.id,
+                                                            (data['scannedFileUrl'] ??
+                                                                    '')
+                                                                .toString(),
+                                                            (data['pdfFileName'] ??
+                                                                    '')
+                                                                .toString(),
+                                                          ),
+                                                      style: TextButton.styleFrom(
+                                                        foregroundColor:
+                                                            downloadLabelColor,
+                                                      ),
+                                                      icon: Icon(
+                                                        Icons
+                                                            .download_for_offline_outlined,
+                                                        size: 18,
+                                                        color:
+                                                            downloadLabelColor,
+                                                      ),
+                                                      label: SizedBox(
+                                                        width: 140,
+                                                        child: Text(
+                                                          ((data['pdfFileName'] ??
+                                                                          '')
+                                                                      .toString()
+                                                                      .trim())
+                                                                  .isNotEmpty
+                                                              ? (data['pdfFileName'] ??
                                                                         '')
                                                                     .toString()
-                                                                    .trim())
-                                                                .isNotEmpty
-                                                            ? (data['pdfFileName'] ??
-                                                                      '')
-                                                                  .toString()
-                                                            : 'Download File',
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                          color:
-                                                              downloadLabelColor,
+                                                              : 'Download File',
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            color:
+                                                                downloadLabelColor,
+                                                          ),
                                                         ),
                                                       ),
-                                                    ),
-                                                  );
-                                          },
+                                                    );
+                                            },
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'forwardedTo',
-                                        (data['forwardedTo'] ?? '').toString(),
-                                        width: 142,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'forwardedTo',
+                                          (data['forwardedTo'] ?? '')
+                                              .toString(),
+                                          width: 142,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'receivedBy',
-                                        (data['receivedBy'] ?? '').toString(),
-                                        width: 156,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'receivedBy',
+                                          (data['receivedBy'] ?? '').toString(),
+                                          width: 156,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'comment',
-                                        (data['comment'] ?? '').toString(),
-                                        width: 172,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'comment',
+                                          (data['comment'] ?? '').toString(),
+                                          width: 172,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'actionTaken',
-                                        (data['actionTaken'] ?? '').toString(),
-                                        width: 172,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'actionTaken',
+                                          (data['actionTaken'] ?? '')
+                                              .toString(),
+                                          width: 172,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      SizedBox(
-                                        width: 156,
-                                        child:
-                                            (data['adminDocumentUrl'] ?? '')
-                                                .toString()
-                                                .trim()
-                                                .isEmpty
-                                            ? Text(
-                                                'No attachment',
-                                                style: TextStyle(
-                                                  color: _secondaryText,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                              )
-                                            : TextButton.icon(
-                                                onPressed: () =>
-                                                    _downloadAttachment(
-                                                  doc.id,
-                                                  (data['adminDocumentUrl'] ??
-                                                          '')
-                                                      .toString(),
-                                                  (data['adminDocumentFileName'] ??
-                                                          '')
-                                                      .toString(),
-                                                ),
-                                                icon: const Icon(
-                                                  Icons
-                                                      .download_for_offline_outlined,
-                                                  size: 18,
-                                                ),
-                                                label: SizedBox(
-                                                  width: 138,
-                                                  child: Text(
-                                                    ((data['adminDocumentFileName'] ??
+                                      DataCell(
+                                        SizedBox(
+                                          width: 156,
+                                          child:
+                                              (data['adminDocumentUrl'] ?? '')
+                                                  .toString()
+                                                  .trim()
+                                                  .isEmpty
+                                              ? Text(
+                                                  'No attachment',
+                                                  style: TextStyle(
+                                                    color: _secondaryText,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                )
+                                              : TextButton.icon(
+                                                  onPressed: () => _downloadAttachment(
+                                                    doc.id,
+                                                    (data['adminDocumentUrl'] ??
+                                                            '')
+                                                        .toString(),
+                                                    (data['adminDocumentFileName'] ??
+                                                            '')
+                                                        .toString(),
+                                                  ),
+                                                  icon: const Icon(
+                                                    Icons
+                                                        .download_for_offline_outlined,
+                                                    size: 18,
+                                                  ),
+                                                  label: SizedBox(
+                                                    width: 138,
+                                                    child: Text(
+                                                      ((data['adminDocumentFileName'] ??
+                                                                      '')
+                                                                  .toString()
+                                                                  .trim())
+                                                              .isNotEmpty
+                                                          ? (data['adminDocumentFileName'] ??
                                                                     '')
                                                                 .toString()
-                                                                .trim())
-                                                            .isNotEmpty
-                                                        ? (data['adminDocumentFileName'] ??
-                                                                  '')
-                                                              .toString()
-                                                        : 'Download File',
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
+                                                          : 'Download File',
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      _buildEditableCell(
-                                        doc.id,
-                                        'remarks',
-                                        (data['remarks'] ?? '').toString(),
-                                        width: 156,
+                                      DataCell(
+                                        _buildEditableCell(
+                                          doc.id,
+                                          'remarks',
+                                          (data['remarks'] ?? '').toString(),
+                                          width: 156,
+                                        ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      SizedBox(
-                                        width: 124,
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: _buildConfidentialBadge(
-                                            _isConfidentialFromData(data),
+                                      DataCell(
+                                        SizedBox(
+                                          width: 124,
+                                          child: Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: _buildConfidentialBadge(
+                                              _isConfidentialFromData(data),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      SizedBox(
-                                        width: 110,
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: _buildStatusBadge(
-                                            _statusFromData(data),
+                                      DataCell(
+                                        SizedBox(
+                                          width: 110,
+                                          child: Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: _buildStatusBadge(
+                                              _statusFromData(data),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    DataCell(
-                                      SizedBox(
-                                        width: 108,
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            IconButton(
-                                              onPressed: () =>
-                                                  _showUpdateRegistryDialog(
-                                                doc.id,
-                                                data,
+                                      DataCell(
+                                        SizedBox(
+                                          width: 108,
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              IconButton(
+                                                onPressed: () =>
+                                                    _showUpdateRegistryDialog(
+                                                      doc.id,
+                                                      data,
+                                                    ),
+                                                icon: const Icon(
+                                                  Icons.edit_note_outlined,
+                                                ),
+                                                iconSize: 22,
+                                                splashRadius: 20,
+                                                padding: EdgeInsets.zero,
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      minWidth: 36,
+                                                      minHeight: 36,
+                                                    ),
+                                                tooltip: 'Update registry',
                                               ),
-                                              icon: const Icon(
-                                                Icons.edit_note_outlined,
+                                              IconButton(
+                                                onPressed: () =>
+                                                    exportRoutingSlipPdf(data),
+                                                icon: const Icon(
+                                                  Icons.print_outlined,
+                                                ),
+                                                iconSize: 20,
+                                                splashRadius: 20,
+                                                padding: EdgeInsets.zero,
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      minWidth: 36,
+                                                      minHeight: 36,
+                                                    ),
+                                                tooltip: 'Print routing slip',
                                               ),
-                                              iconSize: 22,
-                                              splashRadius: 20,
-                                              padding: EdgeInsets.zero,
-                                              constraints:
-                                                  const BoxConstraints(
-                                                minWidth: 36,
-                                                minHeight: 36,
+                                              IconButton(
+                                                onPressed: () =>
+                                                    _showDeleteDialog(doc.id),
+                                                icon: const Icon(
+                                                  Icons.delete_outline,
+                                                  color: Colors.red,
+                                                ),
+                                                iconSize: 20,
+                                                splashRadius: 20,
+                                                padding: EdgeInsets.zero,
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      minWidth: 36,
+                                                      minHeight: 36,
+                                                    ),
+                                                tooltip: 'Delete document',
                                               ),
-                                              tooltip: 'Update registry',
-                                            ),
-                                            IconButton(
-                                              onPressed: () =>
-                                                  _showDeleteDialog(doc.id),
-                                              icon: const Icon(
-                                                Icons.delete_outline,
-                                                color: Colors.red,
-                                              ),
-                                              iconSize: 20,
-                                              splashRadius: 20,
-                                              padding: EdgeInsets.zero,
-                                              constraints:
-                                                  const BoxConstraints(
-                                                minWidth: 36,
-                                                minHeight: 36,
-                                              ),
-                                              tooltip: 'Delete document',
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                );
-                              }).toList(),
-                                    ),
+                                    ],
+                                  );
+                                }).toList(),
+                              ),
                             ),
                           ),
                         );
@@ -2780,7 +3447,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               child: _buildHorizontalScrollControl(),
             ),
           ),
-      ],
+        ],
       ),
     );
   }
@@ -2824,6 +3491,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     final searchableValues = [
                       _formatDate(_extractTimestamp(data)),
                       _filingCodeFromData(data),
+                      _filingSubCategoryFromData(data),
                       _retentionPeriodFromData(data),
                       _dispositionDateFromData(data),
                       (data['controlNumber'] ?? '').toString(),
@@ -2835,11 +3503,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       (data['comment'] ?? '').toString(),
                       (data['actionTaken'] ?? '').toString(),
                       _fileLocationFromData(data),
-          (data['adminDocumentFileName'] ?? '').toString(),
-          (data['remarks'] ?? '').toString(),
-          _isConfidentialFromData(data) ? 'Confidential' : 'Open',
-          _statusLabel(_statusFromData(data)),
-          (data['scannedFileUrl'] ?? '').toString(),
+                      (data['adminDocumentFileName'] ?? '').toString(),
+                      (data['remarks'] ?? '').toString(),
+                      _isConfidentialFromData(data) ? 'Confidential' : 'Open',
+                      _statusLabel(_statusFromData(data)),
+                      (data['scannedFileUrl'] ?? '').toString(),
                     ].map((value) => value.toLowerCase());
 
                     return searchableValues.any(
@@ -2904,7 +3572,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                             ],
                           ),
                           const SizedBox(height: 20),
-                          _buildToolbar(context),
+                          _buildToolbar(context, docs),
                           const SizedBox(height: 20),
                           SizedBox(
                             height: 560,

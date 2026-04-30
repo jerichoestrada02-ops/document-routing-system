@@ -3,6 +3,8 @@ import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({Key? key}) : super(key: key);
@@ -106,6 +108,229 @@ class _AdminDashboardState extends State<AdminDashboard> {
       return DateFormat('yyyy-MM-dd').format(timestamp.toDate());
     }
     return timestamp.toString();
+  }
+
+  String _routingSlipValue(Map<String, dynamic> data, String field) {
+    return (data[field] ?? '').toString().trim();
+  }
+
+  String _safePdfFileName(String value) {
+    final sanitized = value
+        .trim()
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+    return sanitized.isEmpty ? 'document' : sanitized;
+  }
+
+  Future<void> exportRoutingSlipPdf(Map<String, dynamic> data) async {
+    final pdf = pw.Document();
+    final dateReceived = _formatDate(_extractTimestamp(data));
+    final controlNumber = _routingSlipValue(data, 'controlNumber');
+    final office = _routingSlipValue(data, 'office');
+    final particular = _routingSlipValue(data, 'particular');
+    final comment = _routingSlipValue(data, 'comment');
+    final receivedBy = _routingSlipValue(data, 'receivedBy');
+
+    pw.Widget labeledLine(String label, String value) {
+      return pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        children: [
+          pw.Text(
+            label,
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(width: 5),
+          pw.Expanded(
+            child: pw.Container(
+              padding: const pw.EdgeInsets.only(bottom: 2),
+              decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                  bottom: pw.BorderSide(width: 0.6, color: PdfColors.black),
+                ),
+              ),
+              child: pw.Text(value, style: const pw.TextStyle(fontSize: 9)),
+            ),
+          ),
+        ],
+      );
+    }
+
+    pw.Widget checkbox(String label) {
+      return pw.Padding(
+        padding: const pw.EdgeInsets.only(bottom: 6),
+        child: pw.Row(
+          children: [
+            pw.Container(
+              width: 10,
+              height: 10,
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(width: 0.8, color: PdfColors.black),
+              ),
+            ),
+            pw.SizedBox(width: 6),
+            pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
+          ],
+        ),
+      );
+    }
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a5.landscape,
+        margin: const pw.EdgeInsets.all(18),
+        build: (context) {
+          return pw.Container(
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(width: 1.2, color: PdfColors.black),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Center(
+                  child: pw.Column(
+                    children: [
+                      pw.Text(
+                        'GENERAL SERVICES OFFICE',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                      pw.SizedBox(height: 2),
+                      pw.Text(
+                        'City Government',
+                        style: const pw.TextStyle(fontSize: 10),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'ROUTING SLIP',
+                        style: pw.TextStyle(
+                          fontSize: 15,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: labeledLine(
+                        'Communication No:',
+                        controlNumber,
+                      ),
+                    ),
+                    pw.SizedBox(width: 18),
+                    pw.Expanded(child: labeledLine('Date:', dateReceived)),
+                  ],
+                ),
+                pw.SizedBox(height: 9),
+                labeledLine('From:', office),
+                pw.SizedBox(height: 8),
+                labeledLine('Subject:', particular),
+                pw.SizedBox(height: 12),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          checkbox('For Information'),
+                          checkbox('Prepare reply'),
+                          checkbox('Note and file'),
+                          checkbox('For investigation & report'),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 22),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          checkbox('For verification'),
+                          checkbox('For appropriate action'),
+                          checkbox('Signature'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 8),
+                pw.Text(
+                  'Comment',
+                  style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Container(
+                  height: 56,
+                  padding: const pw.EdgeInsets.all(6),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(width: 0.8, color: PdfColors.black),
+                  ),
+                  child: pw.Text(
+                    comment,
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ),
+                pw.Spacer(),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: labeledLine('Received By:', receivedBy),
+                    ),
+                    pw.SizedBox(width: 24),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(
+                            'EUGENE D. BUYUCAN',
+                            style: pw.TextStyle(
+                              fontSize: 9,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(height: 8),
+                          pw.Container(
+                            height: 20,
+                            decoration: const pw.BoxDecoration(
+                              border: pw.Border(
+                                bottom: pw.BorderSide(width: 0.6, color: PdfColors.black),
+                              ),
+                            ),
+                          ),
+                          pw.SizedBox(height: 2),
+                          pw.Text(
+                            'City General Services Officer',
+                            style: const pw.TextStyle(fontSize: 8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    final bytes = await pdf.save();
+    final fileName = 'routing_slip_${_safePdfFileName(controlNumber)}.pdf';
+    final blob = html.Blob([bytes], 'application/pdf');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute('download', fileName)
+      ..style.display = 'none';
+
+    html.document.body?.children.add(anchor);
+    anchor.click();
+    anchor.remove();
+    html.Url.revokeObjectUrl(url);
   }
 
   Timestamp? _extractTimestamp(Map<String, dynamic> data) {
@@ -554,7 +779,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: _softBackground,
               borderRadius: BorderRadius.circular(10),
@@ -739,65 +964,57 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildHorizontalScrollControl() {
-    return AnimatedBuilder(
-      animation: _tableHorizontalController,
-      builder: (context, _) {
-        final hasClients = _tableHorizontalController.hasClients;
-        final maxExtent = hasClients
-            ? _tableHorizontalController.position.maxScrollExtent
-            : 0.0;
-        final canScroll = maxExtent > 0;
-        final canScrollLeft =
-            hasClients && _tableHorizontalController.offset > 0;
-        final canScrollRight =
-            hasClients && _tableHorizontalController.offset < maxExtent;
+  Widget _buildHorizontalScrollControl([ScrollController? scrollController]) {
+    final effectiveController = scrollController ?? _tableHorizontalController;
 
-        void scrollBy(double delta) {
-          if (!canScroll) {
-            return;
-          }
+    void scrollBy(double delta) {
+      if (!effectiveController.hasClients) {
+        return;
+      }
 
-          final target = (_tableHorizontalController.offset + delta).clamp(
-            0.0,
-            maxExtent,
-          );
-          _tableHorizontalController.animateTo(
-            target,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-          );
-        }
+      final position = effectiveController.position;
+      if (position.maxScrollExtent <= 0) {
+        return;
+      }
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: _softBackground,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: _effectiveBorder),
+      final target = (position.pixels + delta).clamp(
+        0.0,
+        position.maxScrollExtent,
+      );
+      effectiveController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: _softBackground,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _effectiveBorder),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            onPressed: () => scrollBy(-520),
+            icon: const Icon(Icons.chevron_left),
+            tooltip: 'Scroll left',
+            color: _primaryColor,
+            splashRadius: 18,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                onPressed: canScrollLeft ? () => scrollBy(-520) : null,
-                icon: const Icon(Icons.chevron_left),
-                tooltip: 'Scroll left',
-                color: _primaryColor,
-                splashRadius: 18,
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                onPressed: canScrollRight ? () => scrollBy(520) : null,
-                icon: const Icon(Icons.chevron_right),
-                tooltip: 'Scroll right',
-                color: _primaryColor,
-                splashRadius: 18,
-              ),
-            ],
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: () => scrollBy(520),
+            icon: const Icon(Icons.chevron_right),
+            tooltip: 'Scroll right',
+            color: _primaryColor,
+            splashRadius: 18,
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -1282,6 +1499,72 @@ class _AdminDashboardState extends State<AdminDashboard> {
     BuildContext context,
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
+    try {
+      return _buildDataSectionContent(context, docs);
+    } catch (error, stackTrace) {
+      return _buildRegistryErrorDetails(error, stackTrace);
+    }
+  }
+
+  Widget _buildRegistryErrorDetails(Object error, StackTrace stackTrace) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: _cardBackground,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.red.shade700),
+      ),
+      child: SingleChildScrollView(
+        child: SelectableText(
+          'Admin registry render error:\n$error\n\n$stackTrace',
+          style: TextStyle(color: _primaryText, fontSize: 12, height: 1.4),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDataSectionContent(
+    BuildContext context,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    const columnWidths = <double>[
+      144,
+      168,
+      168,
+      192,
+      166,
+      136,
+      164,
+      226,
+      176,
+      158,
+      164,
+      190,
+      190,
+      184,
+      190,
+      140,
+    ];
+    const columnLabels = <String>[
+      'Date Received',
+      'Filing Code',
+      'Retention Period',
+      'File Location',
+      'Disposition Date',
+      'Control Number',
+      'Office',
+      'Particular',
+      'Received Document',
+      'Forwarded To',
+      'Received By',
+      'Comment',
+      'Action Taken',
+      'Document',
+      'Remarks',
+      'Actions',
+    ];
+    const tableMinWidth = 2956.0;
+
     return Container(
       decoration: BoxDecoration(
         color: _cardBackground,
@@ -1361,116 +1644,86 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       ),
                     ),
                   )
-                : SingleChildScrollView(
-                    child: Scrollbar(
-                      controller: _tableVerticalController,
-                      thumbVisibility: true,
-                      trackVisibility: true,
-                      child: SingleChildScrollView(
-                        controller: _tableVerticalController,
-                        child: SingleChildScrollView(
-                          controller: _tableHorizontalController,
-                          scrollDirection: Axis.horizontal,
-                          child: ConstrainedBox(
-                              constraints: const BoxConstraints(minWidth: 2200),
-                              child: DataTable(
-                                dataRowMinHeight: 64,
-                                dataRowMaxHeight: 72,
-                                columnSpacing: 18,
-                                horizontalMargin: 16,
-                                headingRowHeight: 52,
-                                dividerThickness: 0.6,
-                                headingRowColor: WidgetStateProperty.all(
-                                  _tableHeaderBackground,
-                                ),
-                                border: TableBorder(
-                                  horizontalInside: BorderSide(
-                                    color: _effectiveBorder,
-                                  ),
-                                ),
-                                columns: const [
-                                  DataColumn(label: Text('Date Received')),
-                                  DataColumn(label: Text('Filing Code')),
-                                  DataColumn(label: Text('Retention Period')),
-                                  DataColumn(label: Text('File Location')),
-                                  DataColumn(label: Text('Disposition Date')),
-                                  DataColumn(label: Text('Control Number')),
-                                  DataColumn(label: Text('Office')),
-                                  DataColumn(label: Text('Particular')),
-                                  DataColumn(label: Text('Received Document')),
-                                  DataColumn(label: Text('Forwarded To')),
-                                  DataColumn(label: Text('Received By')),
-                                  DataColumn(label: Text('Comment')),
-                                  DataColumn(label: Text('Action Taken')),
-                                  DataColumn(label: Text('Document')),
-                                  DataColumn(label: Text('Remarks')),
-                                  DataColumn(label: Text('Actions')),
-                                ],
-                                rows: docs.map((doc) {
-                                  final data = doc.data();
-                                  return DataRow(
-                                    cells: [
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                : _AdminRegistryScroller(
+                    tableMinWidth: tableMinWidth,
+                    scrollControlBuilder: _buildHorizontalScrollControl,
+                    child: SizedBox(
+                      width: tableMinWidth,
+                      child: Column(
+                          children: [
+                            Container(
+                              height: 52,
+                              color: _tableHeaderBackground,
+                              child: Row(
+                                children: List.generate(columnLabels.length, (
+                                  index,
+                                ) {
+                                  return SizedBox(
+                                    width: columnWidths[index],
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                      ),
+                                      child: Text(
+                                        columnLabels[index],
+                                        style: TextStyle(
+                                          color: _primaryText,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ),
+                            ...docs.map((doc) {
+                              final data = doc.data();
+                              final cells = <Widget>[
+                                _buildReadOnlyCell(
                                           _formatDate(_extractTimestamp(data)),
                                           label: 'Date Received',
-                                          width: 126,
+                                          width: 144,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           _filingCodeFromData(data),
                                           label: 'Filing Code',
-                                          width: 150,
+                                          width: 168,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           _retentionPeriodFromData(data),
                                           label: 'Retention Period',
-                                          width: 150,
+                                          width: 168,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildEditableCell(
+                                _buildEditableCell(
                                           doc.id,
                                           'fileLocation',
                                           _fileLocationFromData(data),
                                           label: 'File Location',
-                                          width: 172,
+                                          width: 192,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           _dispositionDateFromData(data),
                                           label: 'Disposition Date',
-                                          width: 148,
+                                          width: 166,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           (data['controlNumber'] ?? '')
                                               .toString(),
                                           label: 'Control Number',
-                                          width: 118,
+                                          width: 136,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           (data['office'] ?? '').toString(),
                                           label: 'Office',
-                                          width: 144,
+                                          width: 164,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           (data['particular'] ?? '').toString(),
                                           label: 'Particular',
-                                          width: 196,
+                                          width: 226,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           ((data['pdfFileName'] ?? '')
                                                       .toString()
                                                       .trim())
@@ -1484,43 +1737,33 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                               ? 'PDF attached'
                                               : 'No attachment',
                                           label: 'Received Document',
-                                          width: 156,
+                                          width: 176,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           (data['forwardedTo'] ?? '').toString(),
                                           label: 'Forwarded To',
-                                          width: 138,
+                                          width: 158,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
+                                _buildReadOnlyCell(
                                           (data['receivedBy'] ?? '').toString(),
                                           label: 'Received By',
-                                          width: 144,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildReadOnlyCell(
-                                          (data['comment'] ?? '').toString(),
-                                          label: 'Comment',
                                           width: 164,
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildEditableCell(
+                                _buildReadOnlyCell(
+                                          (data['comment'] ?? '').toString(),
+                                          label: 'Comment',
+                                          width: 190,
+                                        ),
+                                _buildEditableCell(
                                           doc.id,
                                           'actionTaken',
                                           (data['actionTaken'] ?? '')
                                               .toString(),
                                           label: 'Action Taken',
-                                          width: 164,
+                                          width: 190,
                                         ),
-                                      ),
-                                      DataCell(
-                                        SizedBox(
-                                          width: 156,
+                                SizedBox(
+                                          width: 184,
                                           child: Column(
                                             mainAxisAlignment:
                                                 MainAxisAlignment.center,
@@ -1531,7 +1774,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                 style: TextButton.styleFrom(
                                                   padding:
                                                       const EdgeInsets.symmetric(
-                                                        horizontal: 8,
+                                                        horizontal: 12,
                                                         vertical: 0,
                                                       ),
                                                   minimumSize: const Size(
@@ -1575,7 +1818,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                   style: TextButton.styleFrom(
                                                     padding:
                                                         const EdgeInsets.symmetric(
-                                                          horizontal: 8,
+                                                          horizontal: 12,
                                                           vertical: 0,
                                                         ),
                                                     minimumSize: const Size(
@@ -1606,61 +1849,136 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                             ],
                                           ),
                                         ),
-                                      ),
-                                      DataCell(
-                                        _buildEditableCell(
+                                _buildEditableCell(
                                           doc.id,
                                           'remarks',
                                           (data['remarks'] ?? '').toString(),
                                           label: 'Remarks',
-                                          width: 164,
+                                          width: 190,
                                         ),
-                                      ),
-                                      DataCell(
-                                        SizedBox(
-                                          width: 74,
+                                SizedBox(
+                                          width: 140,
                                           child: Center(
-                                            child: IconButton(
-                                              onPressed: () =>
-                                                  _showUpdateRegistryDialog(
-                                                doc.id,
-                                                data,
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                IconButton(
+                                                  onPressed: () =>
+                                                      _showUpdateRegistryDialog(
+                                                    doc.id,
+                                                    data,
+                                                  ),
+                                                  icon: const Icon(
+                                                    Icons.edit_note_outlined,
+                                                  ),
+                                                  iconSize: 22,
+                                                  splashRadius: 20,
+                                                  padding: EdgeInsets.zero,
+                                                  constraints:
+                                                      const BoxConstraints(
+                                                    minWidth: 36,
+                                                    minHeight: 36,
+                                                  ),
+                                                  tooltip: 'Update registry',
+                                                ),
+                                                const SizedBox(width: 8),
+                                                IconButton(
+                                                  onPressed: () =>
+                                                      exportRoutingSlipPdf(data),
+                                                  icon: const Icon(
+                                                    Icons.picture_as_pdf_outlined,
+                                                  ),
+                                                  iconSize: 21,
+                                                  splashRadius: 20,
+                                                  padding: EdgeInsets.zero,
+                                                  constraints:
+                                                      const BoxConstraints(
+                                                    minWidth: 36,
+                                                    minHeight: 36,
+                                                  ),
+                                                  tooltip:
+                                                      'Export Routing Slip PDF',
                                               ),
-                                              icon: const Icon(
-                                                Icons.edit_note_outlined,
-                                              ),
-                                              iconSize: 22,
-                                              splashRadius: 20,
-                                              padding: EdgeInsets.zero,
-                                              constraints:
-                                                  const BoxConstraints(
-                                                minWidth: 36,
-                                                minHeight: 36,
-                                              ),
-                                              tooltip: 'Update registry',
+                                              ],
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  );
-                                }).toList(),
-                              ),
-                          ),
+                              ];
+
+                              return Container(
+                                height: 88,
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: _effectiveBorder,
+                                      width: 0.6,
+                                    ),
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: cells,
+                                ),
+                              );
+                            }),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: _buildHorizontalScrollControl(),
             ),
-          ),
         ],
       ),
+    );
+  }
+}
+
+class _AdminRegistryScroller extends StatefulWidget {
+  const _AdminRegistryScroller({
+    required this.child,
+    required this.scrollControlBuilder,
+    required this.tableMinWidth,
+  });
+
+  final Widget child;
+  final Widget Function(ScrollController controller) scrollControlBuilder;
+  final double tableMinWidth;
+
+  @override
+  State<_AdminRegistryScroller> createState() => _AdminRegistryScrollerState();
+}
+
+class _AdminRegistryScrollerState extends State<_AdminRegistryScroller> {
+  final ScrollController _horizontalController = ScrollController();
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: SingleChildScrollView(
+              controller: _horizontalController,
+              scrollDirection: Axis.horizontal,
+              child: widget.child,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: widget.scrollControlBuilder(_horizontalController),
+          ),
+        ),
+      ],
     );
   }
 }
