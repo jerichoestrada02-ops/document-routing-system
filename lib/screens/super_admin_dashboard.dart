@@ -708,6 +708,200 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     subCategoryController.dispose();
   }
 
+  Future<void> _confirmDeleteFilingCode(
+    BuildContext dialogContext,
+    String filingCode,
+    void Function(VoidCallback fn) setDialogState,
+  ) async {
+    final shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (confirmContext) => AlertDialog(
+            backgroundColor: _isDark
+                ? const Color(0xFF161E27)
+                : const Color(0xFFFBF9F5),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              'Delete Filing Code',
+              style:
+                  TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+            ),
+            content: Text(
+              'Delete "$filingCode" and all of its sub categories? This cannot be undone.',
+              style: TextStyle(color: _secondaryText),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(confirmContext, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(confirmContext, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _dangerColor,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('rds_options')
+          .where('name', isEqualTo: filingCode)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Filing code not found.'),
+              backgroundColor: _warningColor,
+            ),
+          );
+        }
+        return;
+      }
+
+      await FirebaseFirestore.instance
+          .collection('rds_options')
+          .doc(query.docs.first.id)
+          .delete();
+
+      setDialogState(() {
+        if (_selectedFilingCode == filingCode) {
+          _selectedFilingCode = null;
+          _selectedFilingSubCategory = null;
+          _filingCodeController.clear();
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Filing code deleted successfully.'),
+            backgroundColor: _successColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting filing code: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteFilingSubCategory(
+    BuildContext dialogContext,
+    String filingCode,
+    String subCategory,
+    void Function(VoidCallback fn) setDialogState,
+  ) async {
+    final shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (confirmContext) => AlertDialog(
+            backgroundColor: _isDark
+                ? const Color(0xFF161E27)
+                : const Color(0xFFFBF9F5),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              'Delete Sub Category',
+              style:
+                  TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+            ),
+            content: Text(
+              'Remove "$subCategory" from "$filingCode"? This will delete the sub category only.',
+              style: TextStyle(color: _secondaryText),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(confirmContext, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(confirmContext, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _dangerColor,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('rds_options')
+          .where('name', isEqualTo: filingCode)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Filing code not found.'),
+              backgroundColor: _warningColor,
+            ),
+          );
+        }
+        return;
+      }
+
+      final docRef = FirebaseFirestore.instance
+          .collection('rds_options')
+          .doc(query.docs.first.id);
+
+      await docRef.update({
+        'subcategories': FieldValue.arrayRemove([subCategory]),
+      });
+
+      setDialogState(() {
+        if (_selectedFilingSubCategory == subCategory) {
+          _selectedFilingSubCategory = null;
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sub category deleted successfully.'),
+            backgroundColor: _successColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting sub category: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
   Widget _buildRdsCodeDropdowns(void Function(VoidCallback fn) setDialogState) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance.collection('rds_options').snapshots(),
@@ -732,6 +926,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: _filingCodeOptions.contains(_selectedFilingCode)
                         ? _selectedFilingCode
                         : null,
@@ -740,7 +935,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         .map(
                           (option) => DropdownMenuItem<String>(
                             value: option,
-                            child: Text(option),
+                            child: Text(
+                              option,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
@@ -769,6 +967,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value:
                         subCategoryOptions.contains(_selectedFilingSubCategory)
                         ? _selectedFilingSubCategory
@@ -778,7 +977,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         .map(
                           (option) => DropdownMenuItem<String>(
                             value: option,
-                            child: Text(option),
+                            child: Text(
+                              option,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
@@ -805,6 +1007,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value:
                         _retentionPeriodOptions.contains(
                           _selectedRetentionPeriod,
@@ -816,7 +1019,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         .map(
                           (option) => DropdownMenuItem<String>(
                             value: option,
-                            child: Text(option),
+                            child: Text(
+                              option,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
@@ -853,20 +1059,55 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
             const SizedBox(height: 10),
             Row(
               children: [
-                TextButton.icon(
-                  onPressed: () => _showAddRdsMainDialog(setDialogState),
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Add Filing Code'),
-                  style: TextButton.styleFrom(foregroundColor: _primaryColor),
-                ),
-                const SizedBox(width: 12),
-                TextButton.icon(
-                  onPressed: _selectedFilingCode == null
-                      ? null
-                      : () => _showAddRdsSubCategoryDialog(setDialogState),
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Add Sub Category'),
-                  style: TextButton.styleFrom(foregroundColor: _primaryColor),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => _showAddRdsMainDialog(setDialogState),
+                      icon: const Icon(Icons.add_circle_outline),
+                      label: const Text('Add Filing Code'),
+                      style:
+                          TextButton.styleFrom(foregroundColor: _primaryColor),
+                    ),
+                    TextButton.icon(
+                      onPressed: _selectedFilingCode == null
+                          ? null
+                          : () => _showAddRdsSubCategoryDialog(setDialogState),
+                      icon: const Icon(Icons.add_circle_outline),
+                      label: const Text('Add Sub Category'),
+                      style:
+                          TextButton.styleFrom(foregroundColor: _primaryColor),
+                    ),
+                    TextButton.icon(
+                      onPressed: _selectedFilingCode == null
+                          ? null
+                          : () => _confirmDeleteFilingCode(
+                                context,
+                                _selectedFilingCode!,
+                                setDialogState,
+                              ),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete Filing Code'),
+                      style:
+                          TextButton.styleFrom(foregroundColor: _dangerColor),
+                    ),
+                    TextButton.icon(
+                      onPressed: _selectedFilingCode == null ||
+                              _selectedFilingSubCategory == null
+                          ? null
+                          : () => _confirmDeleteFilingSubCategory(
+                                context,
+                                _selectedFilingCode!,
+                                _selectedFilingSubCategory!,
+                                setDialogState,
+                              ),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete Sub Category'),
+                      style:
+                          TextButton.styleFrom(foregroundColor: _dangerColor),
+                    ),
+                  ],
                 ),
               ],
             ),

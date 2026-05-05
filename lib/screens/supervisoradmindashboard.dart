@@ -1,6 +1,9 @@
 import 'dart:html' as html;
+import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
@@ -15,13 +18,13 @@ class SupervisorAdminDashboard extends StatefulWidget {
 }
 
 class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
-  static const Color _primaryColor = Color(0xFF7B1E1E);
-  static const Color _accentColor = Color(0xFFD6B25E);
+  static const Color _primaryColor = Color(0xFF5A7D9A); // slate-blue
+  static const Color _accentColor = Color(0xFFD4AF37); // gold
   static const Color _surfaceTint = Color(0xFFF4EFE8);
   static const Color _borderColor = Color(0xFFD8CEC0);
   static const Color _textMuted = Color(0xFF5F6B76);
-  static const Color _successColor = Color(0xFF2E6A4F);
-  static const Color _warningColor = Color(0xFFC67A12);
+  static const Color _successColor = Color(0xFF10B981); // emerald
+  static const Color _warningColor = Color(0xFFD4AF37); // gold for pending
   static const Color _dangerColor = Color(0xFFB42318);
 
   final TextEditingController _searchController = TextEditingController();
@@ -395,15 +398,23 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
     return status.isEmpty ? 'pending' : status.toLowerCase();
   }
 
+  int _calculateHoursAgo(Map<String, dynamic> data) {
+    final timestamp = _extractTimestamp(data);
+    if (timestamp == null) return 0;
+    final now = DateTime.now();
+    final diff = now.difference(timestamp.toDate());
+    return diff.inHours;
+  }
+
   Color _statusColor(String status) {
     switch (status.toLowerCase()) {
       case 'approved':
-        return _successColor;
+        return _successColor; // emerald
       case 'rejected':
         return _dangerColor;
       case 'pending':
       default:
-        return _warningColor;
+        return _warningColor; // gold
     }
   }
 
@@ -414,6 +425,14 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
 
     final normalized = status.toLowerCase();
     return normalized[0].toUpperCase() + normalized.substring(1);
+  }
+
+  String _accessLabelFromData(Map<String, dynamic> data) {
+    final isConfidential = data['isConfidential'] == true ||
+        data['confidential'] == true ||
+        (data['access']?.toString().toLowerCase() == 'confidential');
+
+    return isConfidential ? 'Confidential' : 'Open';
   }
 
   String get _selectedRegistryStatusLabel =>
@@ -549,6 +568,387 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
     }
   }
 
+  InputDecoration _dialogInputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: TextStyle(color: _secondaryText),
+      filled: true,
+      fillColor: _softBackground,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _effectiveBorder),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _effectiveBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _primaryColor, width: 1.5),
+      ),
+    );
+  }
+
+  Future<void> _showEditDocumentDialog(
+    String docId,
+    Map<String, dynamic> data,
+  ) async {
+    final controlNumberController = TextEditingController(
+      text: (data['controlNumber'] ?? '').toString(),
+    );
+    final officeController = TextEditingController(
+      text: (data['office'] ?? '').toString(),
+    );
+    final particularController = TextEditingController(
+      text: (data['particular'] ?? '').toString(),
+    );
+    final forwardedToController = TextEditingController(
+      text: (data['forwardedTo'] ?? '').toString(),
+    );
+    final receivedByController = TextEditingController(
+      text: (data['receivedBy'] ?? '').toString(),
+    );
+    final commentController = TextEditingController(
+      text: (data['comment'] ?? '').toString(),
+    );
+    final actionTakenController = TextEditingController(
+      text: (data['actionTaken'] ?? '').toString(),
+    );
+    final fileLocationController = TextEditingController(
+      text: _fileLocationFromData(data),
+    );
+    final remarksController = TextEditingController(
+      text: (data['remarks'] ?? '').toString(),
+    );
+    final filingCodeController = TextEditingController(
+      text: (data['filingCode'] ?? '').toString(),
+    );
+    final retentionPeriodController = TextEditingController(
+      text: _retentionPeriodFromData(data),
+    );
+    String? selectedReceivedDocFileName =
+        (data['pdfFileName'] ?? '').toString().isEmpty
+            ? null
+            : (data['pdfFileName'] ?? '').toString();
+    String? selectedAdminDocFileName =
+        (data['adminDocumentFileName'] ?? '').toString().isEmpty
+            ? null
+            : (data['adminDocumentFileName'] ?? '').toString();
+    String selectedStatus = _statusFromData(data);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: _cardBackground,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Text(
+            'Edit Document',
+            style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
+          ),
+          content: SizedBox(
+            width: 620,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isNarrow = constraints.maxWidth < 520;
+                      final fieldWidth = isNarrow
+                          ? constraints.maxWidth
+                          : (constraints.maxWidth - 12) / 2;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          SizedBox(
+                            width: fieldWidth,
+                            child: TextField(
+                              controller: controlNumberController,
+                              decoration: _dialogInputDecoration('Control Number'),
+                              style: TextStyle(color: _primaryText),
+                            ),
+                          ),
+                          SizedBox(
+                            width: fieldWidth,
+                            child: TextField(
+                              controller: officeController,
+                              decoration: _dialogInputDecoration('Office'),
+                              style: TextStyle(color: _primaryText),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: particularController,
+                    decoration: _dialogInputDecoration('Particular'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final result = await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+                            );
+                            if (result != null && result.files.isNotEmpty) {
+                              setDialogState(() {
+                                selectedReceivedDocFileName = result.files.first.name;
+                              });
+                            }
+                          },
+                          icon: const Icon(Icons.attach_file, size: 16),
+                          label: Text(selectedReceivedDocFileName ?? 'Attach'),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: _effectiveBorder),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      if (selectedReceivedDocFileName != null &&
+                          selectedReceivedDocFileName!.isNotEmpty)
+                        Expanded(
+                          child: TextButton.icon(
+                            onPressed: () {
+                              setDialogState(() {
+                                selectedReceivedDocFileName = null;
+                              });
+                            },
+                            icon: const Icon(Icons.close, size: 16),
+                            label: const Text('Remove'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: _dangerColor,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final result = await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+                            );
+                            if (result != null && result.files.isNotEmpty) {
+                              setDialogState(() {
+                                selectedAdminDocFileName = result.files.first.name;
+                              });
+                            }
+                          },
+                          icon: const Icon(Icons.attach_file, size: 16),
+                          label: Text(selectedAdminDocFileName ?? 'Attach'),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: _effectiveBorder),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      if (selectedAdminDocFileName != null &&
+                          selectedAdminDocFileName!.isNotEmpty)
+                        Expanded(
+                          child: TextButton.icon(
+                            onPressed: () {
+                              setDialogState(() {
+                                selectedAdminDocFileName = null;
+                              });
+                            },
+                            icon: const Icon(Icons.close, size: 16),
+                            label: const Text('Remove'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: _dangerColor,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isNarrow = constraints.maxWidth < 520;
+                      final fieldWidth = isNarrow
+                          ? constraints.maxWidth
+                          : (constraints.maxWidth - 12) / 2;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          SizedBox(
+                            width: fieldWidth,
+                            child: TextField(
+                              controller: forwardedToController,
+                              decoration: _dialogInputDecoration('Forwarded To'),
+                              style: TextStyle(color: _primaryText),
+                            ),
+                          ),
+                          SizedBox(
+                            width: fieldWidth,
+                            child: TextField(
+                              controller: receivedByController,
+                              decoration: _dialogInputDecoration('Received By'),
+                              style: TextStyle(color: _primaryText),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: commentController,
+                    decoration: _dialogInputDecoration('Comment'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: actionTakenController,
+                    decoration: _dialogInputDecoration('Action Taken'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: fileLocationController,
+                    decoration: _dialogInputDecoration('File Location'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: remarksController,
+                    decoration: _dialogInputDecoration('Remarks'),
+                    maxLines: 2,
+                    style: TextStyle(color: _primaryText),
+                  ),
+                  const SizedBox(height: 12),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isNarrow = constraints.maxWidth < 520;
+                      final fieldWidth = isNarrow
+                          ? constraints.maxWidth
+                          : (constraints.maxWidth - 12) / 2;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          SizedBox(
+                            width: fieldWidth,
+                            child: TextField(
+                              controller: filingCodeController,
+                              decoration: _dialogInputDecoration('Filing Code'),
+                              style: TextStyle(color: _primaryText),
+                            ),
+                          ),
+                          SizedBox(
+                            width: fieldWidth,
+                            child: TextField(
+                              controller: retentionPeriodController,
+                              decoration: _dialogInputDecoration(
+                                'Retention Period',
+                              ),
+                              style: TextStyle(color: _primaryText),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: selectedStatus,
+                    decoration: _dialogInputDecoration('Status'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'pending',
+                        child: Text('Pending'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'approved',
+                        child: Text('Approved'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'rejected',
+                        child: Text('Rejected'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setDialogState(() {
+                        selectedStatus = value;
+                      });
+                    },
+                    style: TextStyle(color: _primaryText),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                await FirebaseFirestore.instance
+                    .collection('documents')
+                    .doc(docId)
+                    .update({
+                      'controlNumber': controlNumberController.text.trim(),
+                      'office': officeController.text.trim(),
+                      'particular': particularController.text.trim(),
+                      'forwardedTo': forwardedToController.text.trim(),
+                      'receivedBy': receivedByController.text.trim(),
+                      'comment': commentController.text.trim(),
+                      'actionTaken': actionTakenController.text.trim(),
+                      'fileLocation': fileLocationController.text.trim(),
+                      'remarks': remarksController.text.trim(),
+                      'filingCode': filingCodeController.text.trim(),
+                      'retentionPeriod': retentionPeriodController.text.trim(),
+                      'pdfFileName': selectedReceivedDocFileName ?? '',
+                      'scannedFileUrl': selectedReceivedDocFileName ?? '',
+                      'adminDocumentFileName': selectedAdminDocFileName ?? '',
+                      'adminDocumentUrl': selectedAdminDocFileName ?? '',
+                      'status': selectedStatus,
+                      'updatedAt': FieldValue.serverTimestamp(),
+                    });
+                if (mounted) {
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Document updated successfully.'),
+                      backgroundColor: _successColor,
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save Changes'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildValueCell(
     String value, {
     required double width,
@@ -559,21 +959,29 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
 
     return SizedBox(
       width: width,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: _softBackground,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: _effectiveBorder),
-        ),
-        child: Text(
-          displayValue,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: textColor ?? _primaryText,
-            fontSize: 12,
-            fontWeight: fontWeight,
+      child: InkWell(
+        onTap: () {
+          if (displayValue != '-' && displayValue.isNotEmpty) {
+            _showCellContentDialog(displayValue);
+          }
+        },
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: _softBackground,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _effectiveBorder),
+          ),
+          child: Text(
+            displayValue,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor ?? _primaryText,
+              fontSize: 12,
+              fontWeight: fontWeight,
+            ),
           ),
         ),
       ),
@@ -601,6 +1009,110 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
     );
   }
 
+  Future<void> _showCellContentDialog(String content) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _cardBackground,
+        elevation: 12,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: Text(
+          'Cell Content',
+          style: TextStyle(
+            color: _primaryText,
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
+          ),
+        ),
+        content: Container(
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 340),
+          child: SingleChildScrollView(
+            child: SelectableText(
+              content,
+              style: TextStyle(
+                color: _primaryText,
+                fontSize: 16,
+                height: 1.6,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(
+              'Close',
+              style: TextStyle(color: _primaryText, fontSize: 15),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _downloadFile(String url, String fileName) {
+    if (url.trim().isEmpty) {
+      return;
+    }
+
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute('download', fileName.isNotEmpty ? fileName : 'attachment')
+      ..style.display = 'none';
+
+    html.document.body?.children.add(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  Widget _buildDownloadRow(String label, String fileName, String fileUrl) {
+    final hasFile = fileUrl.trim().isNotEmpty;
+    final displayName = fileName.isNotEmpty
+        ? fileName
+        : (hasFile ? 'Download file' : '-');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                color: _secondaryText,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Expanded(
+            child: hasFile
+                ? TextButton.icon(
+                    onPressed: () => _downloadFile(fileUrl, fileName),
+                    icon: const Icon(Icons.download_outlined),
+                    label: Text(
+                      displayName,
+                      style: TextStyle(color: _primaryText),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _primaryText,
+                      alignment: Alignment.centerLeft,
+                      padding: EdgeInsets.zero,
+                    ),
+                  )
+                : Text(
+                    displayName,
+                    style: TextStyle(color: _primaryText, fontSize: 13),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHorizontalScrollControl() {
     return AnimatedBuilder(
       animation: _tableHorizontalController,
@@ -609,20 +1121,24 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
         final maxExtent = hasClients
             ? _tableHorizontalController.position.maxScrollExtent
             : 0.0;
-        final canScroll = maxExtent > 0;
         final canScrollLeft =
             hasClients && _tableHorizontalController.offset > 0;
         final canScrollRight =
             hasClients && _tableHorizontalController.offset < maxExtent;
 
         void scrollBy(double delta) {
-          if (!canScroll) {
+          if (!_tableHorizontalController.hasClients) {
             return;
           }
 
-          final target = (_tableHorizontalController.offset + delta).clamp(
+          final position = _tableHorizontalController.position;
+          if (position.maxScrollExtent <= 0) {
+            return;
+          }
+
+          final target = (position.pixels + delta).clamp(
             0.0,
-            maxExtent,
+            position.maxScrollExtent,
           );
           _tableHorizontalController.animateTo(
             target,
@@ -642,24 +1158,602 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                onPressed: canScrollLeft ? () => scrollBy(-520) : null,
+                onPressed: () => scrollBy(-520),
                 icon: const Icon(Icons.chevron_left),
                 tooltip: 'Scroll left',
-                color: _primaryColor,
+                color: canScrollLeft ? _primaryColor : _secondaryText,
                 splashRadius: 18,
               ),
               const SizedBox(width: 4),
               IconButton(
-                onPressed: canScrollRight ? () => scrollBy(520) : null,
+                onPressed: () => scrollBy(520),
                 icon: const Icon(Icons.chevron_right),
                 tooltip: 'Scroll right',
-                color: _primaryColor,
+                color: canScrollRight ? _primaryColor : _secondaryText,
                 splashRadius: 18,
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildStatsPanel({
+    required int totalDocuments,
+    required int pending,
+    required int approved,
+    required int rejected,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Supervisor Overview',
+          style: TextStyle(
+            color: _primaryText,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 16),
+        _SupervisorStatCard(
+          title: 'Total Documents',
+          value: '$totalDocuments',
+          subtitle: 'All matched records',
+          icon: Icons.description_outlined,
+          highlightColor: _primaryColor,
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+        const SizedBox(height: 16),
+        _SupervisorStatCard(
+          title: 'Pending',
+          value: '$pending',
+          subtitle: 'Awaiting supervisor action',
+          icon: Icons.pending_actions_outlined,
+          highlightColor: _warningColor,
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+        const SizedBox(height: 16),
+        _SupervisorStatCard(
+          title: 'Approved',
+          value: '$approved',
+          subtitle: 'Supervisor approved',
+          icon: Icons.check_circle_outline,
+          highlightColor: _successColor,
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+        const SizedBox(height: 16),
+        _SupervisorStatCard(
+          title: 'Rejected',
+          value: '$rejected',
+          subtitle: 'Supervisor rejected',
+          icon: Icons.cancel_outlined,
+          highlightColor: _dangerColor,
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showViewMoreDialog(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    int initialIndex,
+  ) async {
+    Widget infoRow(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 120,
+              child: Text(
+                '$label:',
+                style: TextStyle(
+                  color: _secondaryText,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value.trim().isEmpty ? '-' : value,
+                style: TextStyle(color: _primaryText, fontSize: 14, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget infoCard(String title, List<Widget> children) {
+      return Card(
+        color: _cardBackground,
+        elevation: Theme.of(context).brightness == Brightness.light ? 2 : 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: Theme.of(context).brightness == Brightness.dark
+              ? BorderSide(color: _effectiveBorder, width: 1)
+              : BorderSide.none,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: _primaryText,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...children,
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget statusBadge(String status) {
+      Color bgColor;
+      IconData icon;
+      switch (status.toLowerCase()) {
+        case 'approved':
+          bgColor = _successColor;
+          icon = Icons.check_circle;
+          break;
+        case 'rejected':
+          bgColor = _dangerColor;
+          icon = Icons.cancel;
+          break;
+        default:
+          bgColor = _warningColor;
+          icon = Icons.hourglass_empty;
+      }
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: bgColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: bgColor.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: bgColor),
+            const SizedBox(width: 6),
+            Text(
+              _statusLabel(status),
+              style: TextStyle(
+                color: bgColor,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget routingTimeline(Map<String, dynamic> data) {
+      final items = <Widget>[];
+      final forwardedTo = (data['forwardedTo'] ?? '').toString().trim();
+      final receivedBy = (data['receivedBy'] ?? '').toString().trim();
+
+      if (forwardedTo.isNotEmpty) {
+        items.add(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.arrow_forward, size: 16, color: _primaryColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Forwarded To: $forwardedTo',
+                      style: TextStyle(color: _primaryText, fontSize: 14),
+                    ),
+                    if (receivedBy.isNotEmpty)
+                      Text(
+                        'Received By: $receivedBy',
+                        style: TextStyle(color: _secondaryText, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+      return Column(children: items);
+    }
+
+    Widget attachmentRow(String label, String fileName, String url) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 140,
+              child: Text(
+                '$label:',
+                style: TextStyle(
+                  color: _secondaryText,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            Expanded(
+              child: fileName.isEmpty || url.isEmpty
+                  ? Text(
+                      '-',
+                      style: TextStyle(color: _secondaryText, fontSize: 14),
+                    )
+                  : Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _isDark ? _cardBackground : _softBackground,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _effectiveBorder),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.attach_file, size: 20, color: _primaryColor),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              fileName,
+                              style: TextStyle(color: _primaryText, fontSize: 14),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => _downloadFile(url, fileName),
+                            icon: Icon(Icons.download, color: _primaryColor),
+                            tooltip: 'Download',
+                            padding: EdgeInsets.zero,
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    int currentIndex = initialIndex;
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black.withOpacity(0.5),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) =>
+          StatefulBuilder(
+        builder: (dialogContext, setState) {
+          final currentDoc = docs[currentIndex];
+          final data = currentDoc.data();
+          final docId = currentDoc.id;
+          final controlNumber = (data['controlNumber'] ?? '').toString();
+          final status = _statusFromData(data);
+
+          return BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: AlertDialog(
+              backgroundColor: _pageBackground,
+              elevation: 12,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Document Details',
+                          style: TextStyle(
+                            color: _primaryText,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 20,
+                          ),
+                        ),
+                        Text(
+                          'Control Number: $controlNumber',
+                          style: TextStyle(
+                            color: _secondaryText,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: Icon(Icons.close, color: _primaryText),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 900,
+                height: 600,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isCompact = constraints.maxWidth < 700;
+                    return Column(
+                      children: [
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: isCompact
+                                ? Column(
+                                    children: [
+                                      infoCard(
+                                        'Core Info',
+                                        [
+                                          infoRow('Date Received', _formatDate(_extractTimestamp(data))),
+                                          infoRow('Office', (data['office'] ?? '').toString()),
+                                          infoRow('Access', _accessLabelFromData(data)),
+                                          const SizedBox(height: 8),
+                                          statusBadge(status),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      infoCard(
+                                        'Record Details',
+                                        [
+                                          infoRow('Filing Code', _filingCodeFromData(data)),
+                                          infoRow('Retention Period', _retentionPeriodFromData(data)),
+                                          infoRow('File Location', _fileLocationFromData(data)),
+                                          infoRow('Disposition Date', _dispositionDateFromData(data)),
+                                          infoRow('Action Taken', (data['actionTaken'] ?? '').toString()),
+                                          infoRow('Remarks', (data['remarks'] ?? '').toString()),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      infoCard(
+                                        'Attachments',
+                                        [
+                                          attachmentRow(
+                                            'Received Document',
+                                            (data['pdfFileName'] ?? '').toString().trim(),
+                                            (data['scannedFileUrl'] ?? '').toString().trim(),
+                                          ),
+                                          attachmentRow(
+                                            'Document',
+                                            (data['adminDocumentFileName'] ?? '').toString().trim(),
+                                            (data['adminDocumentUrl'] ?? '').toString().trim(),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      infoCard(
+                                        'Routing & History',
+                                        [
+                                          infoRow('Particular', (data['particular'] ?? '').toString()),
+                                          infoRow('Comment', (data['comment'] ?? '').toString()),
+                                          const SizedBox(height: 8),
+                                          routingTimeline(data),
+                                        ],
+                                      ),
+                                    ],
+                                  )
+                                : Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          children: [
+                                            infoCard(
+                                              'Core Info',
+                                              [
+                                                infoRow('Date Received', _formatDate(_extractTimestamp(data))),
+                                                infoRow('Office', (data['office'] ?? '').toString()),
+                                                infoRow('Access', _accessLabelFromData(data)),
+                                                const SizedBox(height: 8),
+                                                statusBadge(status),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 16),
+                                            infoCard(
+                                              'Record Details',
+                                              [
+                                                infoRow('Filing Code', _filingCodeFromData(data)),
+                                                infoRow('Retention Period', _retentionPeriodFromData(data)),
+                                                infoRow('File Location', _fileLocationFromData(data)),
+                                                infoRow('Disposition Date', _dispositionDateFromData(data)),
+                                                infoRow('Action Taken', (data['actionTaken'] ?? '').toString()),
+                                                infoRow('Remarks', (data['remarks'] ?? '').toString()),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 16),
+                                            infoCard(
+                                              'Attachments',
+                                              [
+                                                attachmentRow(
+                                                  'Received Document',
+                                                  (data['pdfFileName'] ?? '').toString().trim(),
+                                                  (data['scannedFileUrl'] ?? '').toString().trim(),
+                                                ),
+                                                attachmentRow(
+                                                  'Document',
+                                                  (data['adminDocumentFileName'] ?? '').toString().trim(),
+                                                  (data['adminDocumentUrl'] ?? '').toString().trim(),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: infoCard(
+                                          'Routing & History',
+                                          [
+                                            infoRow('Particular', (data['particular'] ?? '').toString()),
+                                            infoRow('Comment', (data['comment'] ?? '').toString()),
+                                            const SizedBox(height: 8),
+                                            routingTimeline(data),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                        const Divider(),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Row(
+                            children: [
+                              Text(
+                                'View-only mode | Modified ${_calculateHoursAgo(data)} hours ago',
+                                style: TextStyle(color: _secondaryText, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        TextButton.icon(
+                          onPressed: currentIndex > 0
+                              ? () {
+                                  setState(() {
+                                    currentIndex -= 1;
+                                  });
+                                }
+                              : null,
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('Back'),
+                          style: TextButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: currentIndex < docs.length - 1
+                              ? () {
+                                  setState(() {
+                                    currentIndex += 1;
+                                  });
+                                }
+                              : null,
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text('Next'),
+                          style: TextButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text('Close'),
+                          style: TextButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        ElevatedButton(
+                          onPressed: status == 'approved'
+                              ? null
+                              : () => _confirmApprove(docId, controlNumber),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _successColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            minimumSize: const Size(80, 36),
+                          ),
+                          child: const Text('Approve'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: status == 'rejected'
+                              ? null
+                              : () => _confirmReject(docId, controlNumber),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _dangerColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            minimumSize: const Size(80, 36),
+                          ),
+                          child: const Text('Reject'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _showEditDocumentDialog(docId, data);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            minimumSize: const Size(80, 36),
+                          ),
+                          child: const Text('Edit'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: () => exportRoutingSlipPdf(data),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _primaryColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            minimumSize: const Size(100, 36),
+                          ),
+                          icon: const Icon(Icons.print),
+                          label: const Text('Print Slip'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -884,6 +1978,10 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       ),
                       items: const [
                         DropdownMenuItem(
+                          value: 'all',
+                          child: Text('All Registry'),
+                        ),
+                        DropdownMenuItem(
                           value: 'pending',
                           child: Text('Pending Registry'),
                         ),
@@ -943,7 +2041,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Pending Approval Registry',
+                        'Registry Documents',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w700,
@@ -952,7 +2050,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Supervisor decisions update Firestore instantly and remove completed rows from this queue.',
+                        'A simplified supervisor view with quick controls, document details, and status tracking.',
                         style: TextStyle(
                           color: _secondaryText,
                           fontSize: 13,
@@ -1020,9 +2118,9 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                     thumbVisibility: true,
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        final tableMinWidth = constraints.maxWidth > 2500
+                        final tableMinWidth = constraints.maxWidth > 1000
                             ? constraints.maxWidth
-                            : 2500.0;
+                            : 1000.0;
 
                         return SingleChildScrollView(
                           controller: _tableVerticalController,
@@ -1035,6 +2133,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                                 minWidth: tableMinWidth,
                               ),
                               child: DataTable(
+                                showCheckboxColumn: false,
                                 columnSpacing: 18,
                                 horizontalMargin: 16,
                                 dataRowMinHeight: 72,
@@ -1055,70 +2154,73 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                                   ),
                                 ),
                                 columns: const [
-                                  DataColumn(label: Text('Date Received')),
-                                  DataColumn(label: Text('Filing Code')),
-                                  DataColumn(label: Text('Retention Period')),
-                                  DataColumn(label: Text('File Location')),
-                                  DataColumn(label: Text('Disposition Date')),
                                   DataColumn(label: Text('Control Number')),
+                                  DataColumn(label: Text('Date Received')),
                                   DataColumn(label: Text('Office')),
                                   DataColumn(label: Text('Particular')),
-                                  DataColumn(label: Text('Forwarded To')),
-                                  DataColumn(label: Text('Received By')),
                                   DataColumn(label: Text('Comment')),
-                                  DataColumn(label: Text('Action Taken')),
-                                  DataColumn(label: Text('Remarks')),
-                                  DataColumn(label: Text('Status')),
+                                  DataColumn(label: Text('Access')),
                                   DataColumn(label: Text('Actions')),
                                 ],
-                                rows: docs.map((doc) {
+                                rows: docs.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final doc = entry.value;
                                   final data = doc.data();
-                                  final status = _statusFromData(data);
                                   final controlNumber =
                                       (data['controlNumber'] ?? '').toString();
+                                  final receivedDocStatus =
+                                      ((data['pdfFileName'] ?? '')
+                                              .toString()
+                                              .trim())
+                                          .isNotEmpty
+                                      ? (data['pdfFileName'] ?? '').toString()
+                                      : ((data['scannedFileUrl'] ?? '')
+                                                .toString()
+                                                .trim())
+                                            .isNotEmpty
+                                      ? 'PDF attached'
+                                      : '-';
+                                              final fileStatus =
+                                      ((data['adminDocumentFileName'] ?? '')
+                                              .toString()
+                                              .trim())
+                                          .isNotEmpty
+                                      ? (data['adminDocumentFileName'] ?? '')
+                                            .toString()
+                                      : ((data['adminDocumentUrl'] ?? '')
+                                                .toString()
+                                                .trim())
+                                            .isNotEmpty
+                                      ? 'File attached'
+                                      : '-';
+                                  final accessLabel = _accessLabelFromData(data);
 
                                   return DataRow(
+                                    onSelectChanged: (_) {
+                                      _showViewMoreDialog(docs, index);
+                                    },
+                                    color: WidgetStateProperty.all(
+                                      index.isEven
+                                          ? _softBackground.withOpacity(0.3)
+                                          : null,
+                                    ),
                                     cells: [
                                       DataCell(
                                         _buildValueCell(
-                                          _formatDate(_extractTimestamp(data)),
-                                          width: 132,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
-                                          _filingCodeFromData(data),
-                                          width: 152,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
-                                          _retentionPeriodFromData(data),
-                                          width: 150,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
-                                          _fileLocationFromData(data),
-                                          width: 172,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
-                                          _dispositionDateFromData(data),
-                                          width: 148,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
                                           controlNumber,
-                                          width: 124,
+                                          width: 140,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        _buildValueCell(
+                                          _formatDate(_extractTimestamp(data)),
+                                          width: 120,
                                         ),
                                       ),
                                       DataCell(
                                         _buildValueCell(
                                           (data['office'] ?? '').toString(),
-                                          width: 156,
+                                          width: 140,
                                         ),
                                       ),
                                       DataCell(
@@ -1129,192 +2231,40 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                                       ),
                                       DataCell(
                                         _buildValueCell(
-                                          (data['forwardedTo'] ?? '')
-                                              .toString(),
-                                          width: 142,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
-                                          (data['receivedBy'] ?? '').toString(),
-                                          width: 156,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
                                           (data['comment'] ?? '').toString(),
-                                          width: 172,
+                                          width: 220,
                                         ),
                                       ),
                                       DataCell(
                                         _buildValueCell(
-                                          (data['actionTaken'] ?? '')
-                                              .toString(),
-                                          width: 172,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        _buildValueCell(
-                                          (data['remarks'] ?? '').toString(),
-                                          width: 172,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        SizedBox(
+                                          accessLabel,
                                           width: 110,
-                                          child: Align(
-                                            alignment: Alignment.centerLeft,
-                                            child: _buildStatusBadge(status),
-                                          ),
+                                          textColor: accessLabel == 'Confidential'
+                                              ? _dangerColor
+                                              : _successColor,
                                         ),
                                       ),
                                       DataCell(
                                         SizedBox(
-                                          width: 132,
-                                          child: Row(
-                                            children: [
-                                              Tooltip(
-                                                message: 'Approve document',
-                                                child: Material(
-                                                  color: Colors.transparent,
-                                                  child: InkWell(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          10,
-                                                        ),
-                                                    onTap: status == 'approved'
-                                                        ? null
-                                                        : () => _confirmApprove(
-                                                            doc.id,
-                                                            controlNumber,
-                                                          ),
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                            10,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color: _successColor
-                                                            .withOpacity(
-                                                              _isDark
-                                                                  ? 0.24
-                                                                  : 0.12,
-                                                            ),
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              10,
-                                                            ),
-                                                        border: Border.all(
-                                                          color: _successColor
-                                                              .withOpacity(
-                                                                0.35,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                      child: const Icon(
-                                                        Icons.check,
-                                                        color: _successColor,
-                                                        size: 20,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
+                                          width: 130,
+                                          child: ElevatedButton(
+                                            onPressed: () =>
+                                                _showViewMoreDialog(docs, index),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: _primaryColor,
+                                              foregroundColor: Colors.white,
+                                              padding: const EdgeInsets.symmetric(
+                                                vertical: 12,
                                               ),
-                                              const SizedBox(width: 10),
-                                              Tooltip(
-                                                message: 'Reject document',
-                                                child: Material(
-                                                  color: Colors.transparent,
-                                                  child: InkWell(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          10,
-                                                        ),
-                                                    onTap: status == 'rejected'
-                                                        ? null
-                                                        : () => _confirmReject(
-                                                            doc.id,
-                                                            controlNumber,
-                                                          ),
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                            10,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color: _dangerColor
-                                                            .withOpacity(
-                                                              _isDark
-                                                                  ? 0.24
-                                                                  : 0.12,
-                                                            ),
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              10,
-                                                            ),
-                                                        border: Border.all(
-                                                          color: _dangerColor
-                                                              .withOpacity(
-                                                                0.35,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                      child: const Icon(
-                                                        Icons.close,
-                                                        color: _dangerColor,
-                                                        size: 20,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
                                               ),
-                                              const SizedBox(width: 10),
-                                              Tooltip(
-                                                message: 'Print routing slip',
-                                                child: Material(
-                                                  color: Colors.transparent,
-                                                  child: InkWell(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          10,
-                                                        ),
-                                                    onTap: () =>
-                                                        exportRoutingSlipPdf(
-                                                          data,
-                                                        ),
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                            10,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color: _primaryColor
-                                                            .withOpacity(
-                                                              _isDark
-                                                                  ? 0.24
-                                                                  : 0.12,
-                                                            ),
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              10,
-                                                            ),
-                                                        border: Border.all(
-                                                          color: _primaryColor
-                                                              .withOpacity(
-                                                                0.35,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                      child: const Icon(
-                                                        Icons.print_outlined,
-                                                        color: _primaryColor,
-                                                        size: 20,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
+                                            ),
+                                            child: const Text(
+                                              'View More',
+                                              style: TextStyle(fontSize: 12),
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -1385,7 +2335,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       .toList();
                   final allDocs = (snapshot.data?.docs ?? []).where((doc) {
                     final status = _statusFromData(doc.data());
-                    return status == selectedStatus;
+                    return selectedStatus == 'all' || status == selectedStatus;
                   }).toList();
                   final docs = allDocs.where((doc) {
                     if (query.isEmpty) {
@@ -1421,6 +2371,10 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       : contentWidth >= 920
                       ? (contentWidth - 16) / 2
                       : contentWidth;
+                  final panelHeight = math.max(
+                    760.0,
+                    viewportConstraints.maxHeight - 120,
+                  );
 
                   return SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
@@ -1432,51 +2386,68 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                         children: [
                           _buildTopBanner(),
                           const SizedBox(height: 20),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            children: [
-                              SizedBox(
-                                width: statCardWidth,
-                                child: _SupervisorStatCard(
-                                  title: 'Pending Queue',
-                                  value: '${pendingDocs.length}',
-                                  subtitle: 'Documents waiting for approval',
-                                  icon: Icons.pending_actions_outlined,
-                                  highlightColor: _warningColor,
-                                  darkMode: _isDark,
-                                ),
-                              ),
-                              SizedBox(
-                                width: statCardWidth,
-                                child: _SupervisorStatCard(
-                                  title: 'Approved',
-                                  value: '${approvedDocs.length}',
-                                  subtitle: 'Records approved by supervisor',
-                                  icon: Icons.check_circle_outline,
-                                  highlightColor: const Color(0xFF295C88),
-                                  darkMode: _isDark,
-                                ),
-                              ),
-                              SizedBox(
-                                width: statCardWidth,
-                                child: _SupervisorStatCard(
-                                  title: 'Rejected',
-                                  value: '${rejectedDocs.length}',
-                                  subtitle: 'Records rejected by supervisor',
-                                  icon: Icons.cancel_outlined,
-                                  highlightColor: _dangerColor,
-                                  darkMode: _isDark,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          _buildToolbar(),
-                          const SizedBox(height: 20),
-                          SizedBox(
-                            height: 560,
-                            child: _buildDataSection(context, docs),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final isWide = constraints.maxWidth >= 1200;
+                              return isWide
+                                  ? Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        SizedBox(
+                                          width: 360,
+                                          child: _buildStatsPanel(
+                                            totalDocuments: allDocs.length,
+                                            pending: pendingDocs.length,
+                                            approved: approvedDocs.length,
+                                            rejected: rejectedDocs.length,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 18),
+                                        Expanded(
+                                          child: SizedBox(
+                                            height: panelHeight,
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                _buildToolbar(),
+                                                const SizedBox(height: 20),
+                                                Expanded(
+                                                  child: _buildDataSection(
+                                                    context,
+                                                    docs,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        _buildToolbar(),
+                                        const SizedBox(height: 20),
+                                        _buildStatsPanel(
+                                          totalDocuments: allDocs.length,
+                                          pending: pendingDocs.length,
+                                          approved: approvedDocs.length,
+                                          rejected: rejectedDocs.length,
+                                        ),
+                                        const SizedBox(height: 20),
+                                        SizedBox(
+                                          height: panelHeight,
+                                          child: _buildDataSection(
+                                            context,
+                                            docs,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                            },
                           ),
                         ],
                       ),
@@ -1498,6 +2469,7 @@ class _SupervisorStatCard extends StatelessWidget {
     required this.icon,
     required this.highlightColor,
     required this.darkMode,
+    required this.totalDocuments,
   });
 
   final String title;
@@ -1506,19 +2478,34 @@ class _SupervisorStatCard extends StatelessWidget {
   final IconData icon;
   final Color highlightColor;
   final bool darkMode;
+  final int totalDocuments;
 
   @override
   Widget build(BuildContext context) {
+    final progressValue = totalDocuments > 0
+        ? (int.tryParse(value) ?? 0) / totalDocuments
+        : 0.0;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: darkMode ? const Color(0xFF1A212B) : Colors.white,
+        gradient: LinearGradient(
+          colors: darkMode
+              ? [const Color(0xFF1A212B), const Color(0xFF2A3441)]
+              : [Colors.white, const Color(0xFFF8F8F8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: darkMode ? const Color(0xFF344252) : const Color(0xFFD8CEC0),
         ),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
+            color: highlightColor.withOpacity(0.15),
+            blurRadius: 25,
+            offset: const Offset(0, 12),
+          ),
+          const BoxShadow(
             color: Color(0x12000000),
             blurRadius: 16,
             offset: Offset(0, 8),
@@ -1580,6 +2567,12 @@ class _SupervisorStatCard extends StatelessWidget {
                   : const Color(0xFF5F6B76),
               fontSize: 13,
             ),
+          ),
+          const SizedBox(height: 12),
+          LinearProgressIndicator(
+            value: progressValue,
+            backgroundColor: highlightColor.withOpacity(0.1),
+            valueColor: AlwaysStoppedAnimation<Color>(highlightColor),
           ),
         ],
       ),

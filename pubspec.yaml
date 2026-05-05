@@ -19,6 +19,7 @@ dependencies:
   path_provider: ^2.0.15        # File system paths
   excel: ^4.0.3                  # Excel export
   flutter_switch: ^0.3.2        # Optional: nice toggle switch for light/dark mode
+  file_picker: ^8.0.0+1         # File picker for attachments
 
 dev_dependencies:
   flutter_test:
