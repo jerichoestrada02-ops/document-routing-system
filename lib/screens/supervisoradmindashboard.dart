@@ -9,6 +9,8 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../services/debounce_service.dart';
+
 class SupervisorAdminDashboard extends StatefulWidget {
   const SupervisorAdminDashboard({super.key});
 
@@ -28,6 +30,8 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
   static const Color _dangerColor = Color(0xFFB42318);
 
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  final DebounceService _searchDebounce = DebounceService();
   final ScrollController _tableHorizontalController = ScrollController();
   final ScrollController _tableVerticalController = ScrollController();
 
@@ -52,6 +56,8 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
+    _searchDebounce.dispose();
     _tableHorizontalController.dispose();
     _tableVerticalController.dispose();
     super.dispose();
@@ -64,6 +70,28 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
   void _toggleTheme() {
     setState(() {
       _darkMode = !_darkMode;
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    final shouldRestoreFocus = _searchFocusNode.hasFocus;
+    _searchDebounce.run(() {
+      if (!mounted) {
+        return;
+      }
+      if (_searchText == value) {
+        return;
+      }
+      setState(() {
+        _searchText = value;
+      });
+      if (shouldRestoreFocus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _searchFocusNode.requestFocus();
+          }
+        });
+      }
     });
   }
 
@@ -635,6 +663,9 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
             ? null
             : (data['adminDocumentFileName'] ?? '').toString();
     String selectedStatus = _statusFromData(data);
+    bool isConfidential = data['isConfidential'] == true ||
+        data['confidential'] == true ||
+        (data['access']?.toString().toLowerCase() == 'confidential');
 
     await showDialog<void>(
       context: context,
@@ -893,6 +924,36 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                     },
                     style: TextStyle(color: _primaryText),
                   ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: isConfidential,
+                    activeColor: _primaryColor,
+                    secondary: Icon(
+                      isConfidential
+                          ? Icons.lock_outline
+                          : Icons.lock_open_outlined,
+                      color: isConfidential ? _primaryColor : _secondaryText,
+                    ),
+                    title: Text(
+                      'Confidential',
+                      style: TextStyle(
+                        color: _primaryText,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      isConfidential
+                          ? 'This document is restricted.'
+                          : 'This document is open.',
+                      style: TextStyle(color: _secondaryText),
+                    ),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        isConfidential = value;
+                      });
+                    },
+                  ),
                 ],
               ),
             ),
@@ -924,6 +985,9 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                       'adminDocumentFileName': selectedAdminDocFileName ?? '',
                       'adminDocumentUrl': selectedAdminDocFileName ?? '',
                       'status': selectedStatus,
+                      'isConfidential': isConfidential,
+                      'confidential': isConfidential,
+                      'access': isConfidential ? 'confidential' : 'open',
                       'updatedAt': FieldValue.serverTimestamp(),
                     });
                 if (mounted) {
@@ -1836,10 +1900,14 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.white.withOpacity(0.16)),
                 ),
-                child: const Icon(
-                  Icons.approval_outlined,
-                  color: Colors.white,
-                  size: 36,
+                child: Image.asset(
+                  'assets/images/company_logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Icon(
+                    Icons.approval_outlined,
+                    color: Colors.white,
+                    size: 36,
+                  ),
                 ),
               ),
               SizedBox(width: compact ? 0 : 20, height: compact ? 16 : 0),
@@ -1924,6 +1992,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                 width: compact ? constraints.maxWidth : 430,
                 child: TextField(
                   controller: _searchController,
+                  focusNode: _searchFocusNode,
                   decoration: InputDecoration(
                     hintText:
                         'Search ${_selectedRegistryStatusLabel.toLowerCase()} records by date, control no., office, person, or remarks',
@@ -1944,11 +2013,7 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                     ),
                   ),
                   style: TextStyle(color: _primaryText),
-                  onChanged: (value) {
-                    setState(() {
-                      _searchText = value;
-                    });
-                  },
+                  onChanged: _onSearchChanged,
                 ),
               ),
               Container(
@@ -2249,11 +2314,15 @@ class _SupervisorAdminDashboardState extends State<SupervisorAdminDashboard> {
                                           width: 130,
                                           child: ElevatedButton(
                                             onPressed: () =>
-                                                _showViewMoreDialog(docs, index),
+                                                _showViewMoreDialog(
+                                              docs,
+                                              index,
+                                            ),
                                             style: ElevatedButton.styleFrom(
                                               backgroundColor: _primaryColor,
                                               foregroundColor: Colors.white,
-                                              padding: const EdgeInsets.symmetric(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
                                                 vertical: 12,
                                               ),
                                               shape: RoundedRectangleBorder(

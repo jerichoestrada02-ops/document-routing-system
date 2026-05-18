@@ -1,10 +1,11 @@
 import 'dart:html' as html;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
+
+import '../services/debounce_service.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({Key? key}) : super(key: key);
@@ -24,6 +25,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   // search & theme
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  final DebounceService _searchDebounce = DebounceService();
   String _searchText = '';
 
   // form controllers
@@ -35,8 +38,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
   final TextEditingController _receivedByController = TextEditingController();
   final TextEditingController _forwardedToController = TextEditingController();
   final TextEditingController _commentController = TextEditingController();
-  final ScrollController _tableHorizontalController = ScrollController();
-  final ScrollController _tableVerticalController = ScrollController();
 
   final _formKey = GlobalKey<FormState>();
   DateTime? _selectedDate;
@@ -69,6 +70,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
+    _searchDebounce.dispose();
     _dateController.dispose();
     _controlNumberController.dispose();
     _officeController.dispose();
@@ -76,8 +79,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     _receivedByController.dispose();
     _forwardedToController.dispose();
     _commentController.dispose();
-    _tableHorizontalController.dispose();
-    _tableVerticalController.dispose();
     super.dispose();
   }
 
@@ -110,229 +111,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return timestamp.toString();
   }
 
-  String _routingSlipValue(Map<String, dynamic> data, String field) {
-    return (data[field] ?? '').toString().trim();
-  }
-
-  String _safePdfFileName(String value) {
-    final sanitized = value
-        .trim()
-        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
-        .replaceAll(RegExp(r'\s+'), '_');
-    return sanitized.isEmpty ? 'document' : sanitized;
-  }
-
-  Future<void> exportRoutingSlipPdf(Map<String, dynamic> data) async {
-    final pdf = pw.Document();
-    final dateReceived = _formatDate(_extractTimestamp(data));
-    final controlNumber = _routingSlipValue(data, 'controlNumber');
-    final office = _routingSlipValue(data, 'office');
-    final particular = _routingSlipValue(data, 'particular');
-    final comment = _routingSlipValue(data, 'comment');
-    final receivedBy = _routingSlipValue(data, 'receivedBy');
-
-    pw.Widget labeledLine(String label, String value) {
-      return pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.end,
-        children: [
-          pw.Text(
-            label,
-            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(width: 5),
-          pw.Expanded(
-            child: pw.Container(
-              padding: const pw.EdgeInsets.only(bottom: 2),
-              decoration: const pw.BoxDecoration(
-                border: pw.Border(
-                  bottom: pw.BorderSide(width: 0.6, color: PdfColors.black),
-                ),
-              ),
-              child: pw.Text(value, style: const pw.TextStyle(fontSize: 9)),
-            ),
-          ),
-        ],
-      );
-    }
-
-    pw.Widget checkbox(String label) {
-      return pw.Padding(
-        padding: const pw.EdgeInsets.only(bottom: 6),
-        child: pw.Row(
-          children: [
-            pw.Container(
-              width: 10,
-              height: 10,
-              decoration: pw.BoxDecoration(
-                border: pw.Border.all(width: 0.8, color: PdfColors.black),
-              ),
-            ),
-            pw.SizedBox(width: 6),
-            pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
-          ],
-        ),
-      );
-    }
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a5.landscape,
-        margin: const pw.EdgeInsets.all(18),
-        build: (context) {
-          return pw.Container(
-            padding: const pw.EdgeInsets.all(14),
-            decoration: pw.BoxDecoration(
-              border: pw.Border.all(width: 1.2, color: PdfColors.black),
-            ),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-              children: [
-                pw.Center(
-                  child: pw.Column(
-                    children: [
-                      pw.Text(
-                        'GENERAL SERVICES OFFICE',
-                        style: pw.TextStyle(
-                          fontSize: 12,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                      pw.SizedBox(height: 2),
-                      pw.Text(
-                        'City Government',
-                        style: const pw.TextStyle(fontSize: 10),
-                      ),
-                      pw.SizedBox(height: 4),
-                      pw.Text(
-                        'ROUTING SLIP',
-                        style: pw.TextStyle(
-                          fontSize: 15,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                pw.SizedBox(height: 12),
-                pw.Row(
-                  children: [
-                    pw.Expanded(
-                      child: labeledLine(
-                        'Communication No:',
-                        controlNumber,
-                      ),
-                    ),
-                    pw.SizedBox(width: 18),
-                    pw.Expanded(child: labeledLine('Date:', dateReceived)),
-                  ],
-                ),
-                pw.SizedBox(height: 9),
-                labeledLine('From:', office),
-                pw.SizedBox(height: 8),
-                labeledLine('Subject:', particular),
-                pw.SizedBox(height: 12),
-                pw.Row(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Expanded(
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          checkbox('For Information'),
-                          checkbox('Prepare reply'),
-                          checkbox('Note and file'),
-                          checkbox('For investigation & report'),
-                        ],
-                      ),
-                    ),
-                    pw.SizedBox(width: 22),
-                    pw.Expanded(
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          checkbox('For verification'),
-                          checkbox('For appropriate action'),
-                          checkbox('Signature'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                pw.SizedBox(height: 8),
-                pw.Text(
-                  'Comment',
-                  style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-                ),
-                pw.SizedBox(height: 4),
-                pw.Container(
-                  height: 56,
-                  padding: const pw.EdgeInsets.all(6),
-                  decoration: pw.BoxDecoration(
-                    border: pw.Border.all(width: 0.8, color: PdfColors.black),
-                  ),
-                  child: pw.Text(
-                    comment,
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                ),
-                pw.Spacer(),
-                pw.Row(
-                  children: [
-                    pw.Expanded(
-                      child: labeledLine('Received By:', receivedBy),
-                    ),
-                    pw.SizedBox(width: 24),
-                    pw.Expanded(
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Text(
-                            'EUGENE D. BUYUCAN',
-                            style: pw.TextStyle(
-                              fontSize: 9,
-                              fontWeight: pw.FontWeight.bold,
-                            ),
-                          ),
-                          pw.SizedBox(height: 8),
-                          pw.Container(
-                            height: 20,
-                            decoration: const pw.BoxDecoration(
-                              border: pw.Border(
-                                bottom: pw.BorderSide(width: 0.6, color: PdfColors.black),
-                              ),
-                            ),
-                          ),
-                          pw.SizedBox(height: 2),
-                          pw.Text(
-                            'City General Services Officer',
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-
-    final bytes = await pdf.save();
-    final fileName = 'routing_slip_${_safePdfFileName(controlNumber)}.pdf';
-    final blob = html.Blob([bytes], 'application/pdf');
-    final url = html.Url.createObjectUrlFromBlob(blob);
-    final anchor = html.AnchorElement(href: url)
-      ..setAttribute('download', fileName)
-      ..style.display = 'none';
-
-    html.document.body?.children.add(anchor);
-    anchor.click();
-    anchor.remove();
-    html.Url.revokeObjectUrl(url);
-  }
-
   Timestamp? _extractTimestamp(Map<String, dynamic> data) {
     final dynamic timestamp = data['dateReceived'] ?? data['date'];
     if (timestamp is Timestamp) {
@@ -341,149 +119,131 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return null;
   }
 
-  int? _retentionYears(String retentionPeriod) {
-    final normalized = retentionPeriod.trim().toLowerCase();
-    if (normalized.isEmpty || normalized == 'permanent') {
-      return null;
-    }
-
-    return int.tryParse(normalized.split(' ').first);
+  String _normalizedDuplicateValue(String value) {
+    return value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
   }
 
-  DateTime _addYears(DateTime date, int years) {
-    final targetYear = date.year + years;
-    final lastDayOfTargetMonth = DateTime(targetYear, date.month + 1, 0).day;
-    final adjustedDay = date.day <= lastDayOfTargetMonth
-        ? date.day
-        : lastDayOfTargetMonth;
+  Future<bool> _documentAlreadyExists() async {
+    final controlNumber = _controlNumberController.text.trim();
+    final office = _normalizedDuplicateValue(_officeController.text);
+    final particular = _normalizedDuplicateValue(_particularController.text);
+    final selectedDate = _selectedDate;
 
-    return DateTime(targetYear, date.month, adjustedDay);
-  }
+    if (controlNumber.isNotEmpty) {
+      final controlSnapshot = await _firestore
+          .collection('documents')
+          .where('controlNumber', isEqualTo: controlNumber)
+          .limit(1)
+          .get();
 
-  DateTime? _calculateDispositionDate(
-    DateTime? dateReceived,
-    String retentionPeriod,
-  ) {
-    if (dateReceived == null) {
-      return null;
-    }
-
-    final years = _retentionYears(retentionPeriod);
-    if (years == null) {
-      return null;
-    }
-
-    return _addYears(dateReceived, years);
-  }
-
-  String _retentionPeriodFromData(Map<String, dynamic> data) {
-    return (data['retentionPeriod'] ?? data['rdsSub'] ?? '').toString();
-  }
-
-  String _filingCodeFromData(Map<String, dynamic> data) {
-    final filingCode = (data['filingCode'] ?? '').toString().trim();
-    if (filingCode.isNotEmpty) {
-      return filingCode;
-    }
-
-    final legacyMain = (data['rdsMain'] ?? '').toString().trim();
-    if (legacyMain.isNotEmpty) {
-      return legacyMain;
-    }
-
-    final legacyCode = (data['rdsCode'] ?? '').toString().trim();
-    if (!legacyCode.contains(' - ')) {
-      return legacyCode;
-    }
-
-    return legacyCode.split(' - ').first.trim();
-  }
-
-  String _dispositionDateFromData(Map<String, dynamic> data) {
-    final storedDisposition = data['dispositionDate'];
-    if (storedDisposition is Timestamp) {
-      return _formatDate(storedDisposition);
-    }
-    if (storedDisposition is DateTime) {
-      return _formatDate(storedDisposition);
-    }
-    if (storedDisposition is String && storedDisposition.trim().isNotEmpty) {
-      return storedDisposition;
-    }
-
-    final retentionPeriod = _retentionPeriodFromData(data);
-    if (retentionPeriod.trim().toLowerCase() == 'permanent') {
-      return 'Permanent';
-    }
-
-    final dateReceived = _extractTimestamp(data)?.toDate();
-    final dispositionDate = _calculateDispositionDate(
-      dateReceived,
-      retentionPeriod,
-    );
-
-    return dispositionDate == null ? '' : _formatDate(dispositionDate);
-  }
-
-  String _fileLocationFromData(Map<String, dynamic> data) {
-    return (data['fileLocation'] ??
-            data['fileLocationAfterRetention'] ??
-            data['retentionFileLocation'] ??
-            data['fileLocationAfterRetentionPeriod'] ??
-            '')
-        .toString();
-  }
-
-  String? _nullableString(String value) {
-    final trimmed = value.trim();
-    return trimmed.isEmpty ? null : trimmed;
-  }
-
-  Future<void> _addDocument() async {
-    if (_formKey.currentState?.validate() ?? false) {
-      try {
-        final selectedTimestamp = _selectedDate == null
-            ? null
-            : Timestamp.fromDate(_selectedDate!);
-        await _firestore.collection('documents').add({
-          'date': selectedTimestamp,
-          'dateReceived': selectedTimestamp,
-          'controlNumber': _nullableString(_controlNumberController.text),
-          'office': _nullableString(_officeController.text),
-          'particular': _nullableString(_particularController.text),
-          'receivedBy': _nullableString(_receivedByController.text),
-          'forwardedTo': _nullableString(_forwardedToController.text),
-          'comment': _nullableString(_commentController.text),
-          'isConfidential': false,
-          'status': 'pending',
-          'submittedBy': 'Admin',
-          'submittedAt': FieldValue.serverTimestamp(),
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-
-        _clearForm();
-        _generateControlNumber();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Document submitted successfully and is pending supervisor approval.',
-              ),
-              backgroundColor: _successColor,
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
-              backgroundColor: Colors.red.shade700,
-            ),
-          );
-        }
+      if (controlSnapshot.docs.isNotEmpty) {
+        return true;
       }
+    }
+
+    if (office.isEmpty || particular.isEmpty || selectedDate == null) {
+      return false;
+    }
+
+    final dateSnapshot = await _firestore
+        .collection('documents')
+        .where('date', isEqualTo: Timestamp.fromDate(selectedDate))
+        .limit(50)
+        .get();
+
+    return dateSnapshot.docs.any((doc) {
+      final data = doc.data();
+      final existingOffice = _normalizedDuplicateValue(
+        (data['office'] ?? '').toString(),
+      );
+      final existingParticular = _normalizedDuplicateValue(
+        (data['particular'] ?? '').toString(),
+      );
+
+      return existingOffice == office && existingParticular == particular;
+    });
+  }
+
+  void _showDuplicateEntryWarning() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'This document entry already exists. Please review the existing record before adding a duplicate.',
+        ),
+        backgroundColor: Colors.orange.shade700,
+      ),
+    );
+  }
+
+  void _onSearchChanged(String value) {
+    final shouldRestoreFocus = _searchFocusNode.hasFocus;
+    _searchDebounce.run(() {
+      if (!mounted) {
+        return;
+      }
+      if (_searchText == value) {
+        return;
+      }
+      setState(() {
+        _searchText = value;
+      });
+      if (shouldRestoreFocus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _searchFocusNode.requestFocus();
+          }
+        });
+      }
+    });
+  }
+
+  Future<bool> _addDocument() async {
+    if (!(_formKey.currentState?.validate() ?? false) ||
+        _selectedDate == null) {
+      return false;
+    }
+
+    try {
+      if (await _documentAlreadyExists()) {
+        if (mounted) {
+          _showDuplicateEntryWarning();
+        }
+        return false;
+      }
+
+      await _firestore.collection('documents').add({
+        'date': Timestamp.fromDate(_selectedDate!),
+        'controlNumber': _controlNumberController.text,
+        'office': _officeController.text,
+        'particular': _particularController.text,
+        'receivedBy': _receivedByController.text,
+        'forwardedTo': _forwardedToController.text,
+        'comment': _commentController.text,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      _clearForm();
+      _generateControlNumber();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Document added successfully!'),
+            backgroundColor: _successColor,
+          ),
+        );
+      }
+      return true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      return false;
     }
   }
 
@@ -638,27 +398,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
-  Future<Map<String, String>?> _pickRegistryAttachment() async {
-    final uploadInput = html.FileUploadInputElement()
-      ..accept = _allowedAttachmentTypes;
-    uploadInput.click();
-
-    await uploadInput.onChange.first;
-    final file = uploadInput.files?.first;
-    if (file == null) {
-      return null;
-    }
-
-    final reader = html.FileReader();
-    reader.readAsDataUrl(file);
-    await reader.onLoad.first;
-
-    return {
-      'url': reader.result?.toString() ?? '',
-      'name': file.name,
-    };
-  }
-
   Future<void> _showCellDialog({
     required String title,
     required String value,
@@ -763,6 +502,73 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  Widget _buildDownloadCell({
+    required String docId,
+    required String fileUrl,
+    required String fileName,
+    required String emptyLabel,
+    double width = 132,
+    bool hasBeenDownloaded = false,
+  }) {
+    final hasFile = fileUrl.trim().isNotEmpty;
+    final displayName = fileName.trim().isNotEmpty
+        ? fileName.trim()
+        : hasFile
+        ? 'Download File'
+        : emptyLabel;
+    final downloadColor = hasBeenDownloaded ? Colors.blue.shade700 : null;
+
+    if (!hasFile) {
+      return _buildReadOnlyCell(emptyLabel, label: emptyLabel, width: width);
+    }
+
+    return SizedBox(
+      width: width,
+      child: TextButton.icon(
+        onPressed: () => _downloadAttachment(docId, fileUrl, fileName),
+        style: TextButton.styleFrom(
+          foregroundColor: downloadColor,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          alignment: Alignment.centerLeft,
+        ),
+        icon: Icon(
+          Icons.download_for_offline_outlined,
+          size: 18,
+          color: downloadColor,
+        ),
+        label: SizedBox(
+          width: width - 44,
+          child: Text(
+            displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: downloadColor, fontSize: 12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _fileLocationFromData(Map<String, dynamic> data) {
+    return (data['fileLocation'] ??
+            data['fileLocationAfterRetention'] ??
+            data['retentionFileLocation'] ??
+            data['fileLocationAfterRetentionPeriod'] ??
+            '')
+        .toString();
+  }
+
+  bool _isConfidentialFromData(Map<String, dynamic> data) {
+    return data['isConfidential'] == true ||
+        data['confidential'] == true ||
+        (data['access']?.toString().toLowerCase() == 'confidential');
+  }
+
+  String _statusFromData(Map<String, dynamic> data) {
+    final status = (data['status'] ?? 'pending').toString().trim();
+    return status.isEmpty ? 'pending' : status.toLowerCase();
+  }
+
   Widget _buildCellCard(
     String value, {
     required double width,
@@ -779,7 +585,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: _softBackground,
               borderRadius: BorderRadius.circular(10),
@@ -809,211 +615,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Future<void> _showUpdateRegistryDialog(
-    String docId,
-    Map<String, dynamic> data,
-  ) async {
-    final actionTakenController = TextEditingController(
-      text: (data['actionTaken'] ?? '').toString(),
-    );
-    final fileLocationController = TextEditingController(
-      text: _fileLocationFromData(data),
-    );
-    final remarksController = TextEditingController(
-      text: (data['remarks'] ?? '').toString(),
-    );
-    String scannedFileUrl = (data['scannedFileUrl'] ?? '').toString();
-    String pdfFileName = (data['pdfFileName'] ?? '').toString();
-    String adminDocumentUrl = (data['adminDocumentUrl'] ?? '').toString();
-    String adminDocumentFileName =
-        (data['adminDocumentFileName'] ?? '').toString();
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: _isDark
-              ? const Color(0xFF161E27)
-              : const Color(0xFFFBF9F5),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text(
-            'Update Registry',
-            style: TextStyle(color: _primaryText, fontWeight: FontWeight.w700),
-          ),
-          content: SizedBox(
-            width: 560,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: actionTakenController,
-                    decoration: _dialogInputDecoration('Action Taken'),
-                    maxLines: 3,
-                    style: TextStyle(color: _primaryText),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: fileLocationController,
-                    decoration: _dialogInputDecoration('File Location'),
-                    maxLines: 3,
-                    style: TextStyle(color: _primaryText),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: remarksController,
-                    decoration: _dialogInputDecoration('Remarks'),
-                    maxLines: 3,
-                    style: TextStyle(color: _primaryText),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () async {
-                            final attachment =
-                                await _pickRegistryAttachment();
-                            if (attachment == null) return;
-                            setDialogState(() {
-                              scannedFileUrl = attachment['url'] ?? '';
-                              pdfFileName = attachment['name'] ?? '';
-                            });
-                          },
-                          icon: const Icon(Icons.attach_file_outlined),
-                          label: Text(
-                            pdfFileName.trim().isEmpty
-                                ? 'Add Received Attachment'
-                                : pdfFileName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () async {
-                            final attachment =
-                                await _pickRegistryAttachment();
-                            if (attachment == null) return;
-                            setDialogState(() {
-                              adminDocumentUrl = attachment['url'] ?? '';
-                              adminDocumentFileName =
-                                  attachment['name'] ?? '';
-                            });
-                          },
-                          icon: const Icon(Icons.upload_file_outlined),
-                          label: Text(
-                            adminDocumentFileName.trim().isEmpty
-                                ? 'Add Document'
-                                : adminDocumentFileName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () async {
-                await _firestore.collection('documents').doc(docId).update({
-                  'actionTaken': actionTakenController.text.trim(),
-                  'fileLocation': fileLocationController.text.trim(),
-                  'remarks': remarksController.text.trim(),
-                  'scannedFileUrl': scannedFileUrl,
-                  'pdfFileName': pdfFileName,
-                  'adminDocumentUrl': adminDocumentUrl,
-                  'adminDocumentFileName': adminDocumentFileName,
-                  'registryUpdatedAt': FieldValue.serverTimestamp(),
-                });
-                if (mounted) {
-                  Navigator.pop(dialogContext);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Registry updated successfully.'),
-                      backgroundColor: _successColor,
-                    ),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _primaryColor,
-                foregroundColor: Colors.white,
-              ),
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Update Registry'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHorizontalScrollControl([ScrollController? scrollController]) {
-    final effectiveController = scrollController ?? _tableHorizontalController;
-
-    void scrollBy(double delta) {
-      if (!effectiveController.hasClients) {
-        return;
-      }
-
-      final position = effectiveController.position;
-      if (position.maxScrollExtent <= 0) {
-        return;
-      }
-
-      final target = (position.pixels + delta).clamp(
-        0.0,
-        position.maxScrollExtent,
-      );
-      effectiveController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: _softBackground,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _effectiveBorder),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            onPressed: () => scrollBy(-520),
-            icon: const Icon(Icons.chevron_left),
-            tooltip: 'Scroll left',
-            color: _primaryColor,
-            splashRadius: 18,
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            onPressed: () => scrollBy(520),
-            icon: const Icon(Icons.chevron_right),
-            tooltip: 'Scroll right',
-            color: _primaryColor,
-            splashRadius: 18,
-          ),
-        ],
       ),
     );
   }
@@ -1104,6 +705,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               'Date',
                               suffixIcon: const Icon(Icons.calendar_today),
                             ),
+                            validator: (value) =>
+                                value!.isEmpty ? 'Please select a date' : null,
                           ),
                         ),
                       ),
@@ -1126,11 +729,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 TextFormField(
                   controller: _officeController,
                   decoration: _dialogInputDecoration('Office'),
+                  validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _particularController,
                   decoration: _dialogInputDecoration('Particular/Description'),
+                  validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -1139,6 +744,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       child: TextFormField(
                         controller: _receivedByController,
                         decoration: _dialogInputDecoration('Received By'),
+                        validator: (value) =>
+                            value!.isEmpty ? 'Required' : null,
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -1165,9 +772,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
             child: const Text('Cancel', style: TextStyle(color: _primaryColor)),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _addDocument();
+            onPressed: () async {
+              final saved = await _addDocument();
+              if (saved && context.mounted) {
+                Navigator.pop(context);
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: _accentColor,
@@ -1242,25 +851,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   }
 
                   final query = _searchText.trim().toLowerCase();
-                  final allDocs = (snapshot.data?.docs ?? []).where((doc) {
-                    final data = doc.data();
-                    final status = (data['status'] ?? 'approved')
-                        .toString()
-                        .trim()
-                        .toLowerCase();
-                    final isConfidential =
-                        data['isConfidential'] == true ||
-                        data['confidential'] == true;
-                    return status == 'approved' && !isConfidential;
-                  }).toList();
+                  final allDocs = (snapshot.data?.docs ?? [])
+                      .where((doc) {
+                        final data = doc.data();
+                        return !_isConfidentialFromData(data) &&
+                            _statusFromData(data) == 'approved';
+                      })
+                      .toList();
                   final docs = allDocs.where((doc) {
                     if (query.isEmpty) return true;
                     final data = doc.data();
                     final searchableValues = [
                       _formatDate(_extractTimestamp(data)),
-                      _filingCodeFromData(data),
-                      _retentionPeriodFromData(data),
-                      _dispositionDateFromData(data),
+                      (data['rdsCode'] ?? '').toString(),
                       (data['controlNumber'] ?? '').toString(),
                       (data['office'] ?? '').toString(),
                       (data['particular'] ?? '').toString(),
@@ -1269,7 +872,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       (data['forwardedTo'] ?? '').toString(),
                       (data['comment'] ?? '').toString(),
                       (data['actionTaken'] ?? '').toString(),
-                      _fileLocationFromData(data),
+                      (data['fileLocation'] ??
+                              data['fileLocationAfterRetention'] ??
+                              data['retentionFileLocation'] ??
+                              data['fileLocationAfterRetentionPeriod'] ??
+                              '')
+                          .toString(),
                       (data['adminDocumentFileName'] ?? '').toString(),
                       (data['remarks'] ?? '').toString(),
                       (data['scannedFileUrl'] ?? '').toString(),
@@ -1279,12 +887,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     );
                   }).toList();
 
-                  final contentWidth = viewportConstraints.maxWidth - 48;
-                  final statCardWidth = contentWidth >= 1360
-                      ? (contentWidth - 16 * 2) / 3
-                      : contentWidth >= 920
-                      ? (contentWidth - 16) / 2
-                      : contentWidth;
+                  final panelHeight = math.max(
+                    760.0,
+                    viewportConstraints.maxHeight - 120,
+                  );
+                  final withAttachments = _countWithAttachments(allDocs);
+                  final withoutActionTaken = _countWithoutActionTaken(allDocs);
 
                   return SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
@@ -1296,51 +904,64 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         children: [
                           _buildTopBanner(context),
                           const SizedBox(height: 20),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            children: [
-                              SizedBox(
-                                width: statCardWidth,
-                                child: _DashboardStatCard(
-                                  title: 'Total Registry',
-                                  value: '${allDocs.length}',
-                                  subtitle: 'All encoded documents',
-                                  icon: Icons.inventory_2_outlined,
-                                  highlightColor: _primaryColor,
-                                  darkMode: _isDark,
-                                ),
-                              ),
-                              SizedBox(
-                                width: statCardWidth,
-                                child: _DashboardStatCard(
-                                  title: 'With Attachment',
-                                  value: '${_countWithAttachments(allDocs)}',
-                                  subtitle: 'PDF documents available',
-                                  icon: Icons.attach_file_outlined,
-                                  highlightColor: const Color(0xFF295C88),
-                                  darkMode: _isDark,
-                                ),
-                              ),
-                              SizedBox(
-                                width: statCardWidth,
-                                child: _DashboardStatCard(
-                                  title: 'Action Taken',
-                                  value: '${_countWithoutActionTaken(allDocs)}',
-                                  subtitle: 'Registry without action taken',
-                                  icon: Icons.pending_actions_outlined,
-                                  highlightColor: _successColor,
-                                  darkMode: _isDark,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          _buildToolbar(context),
-                          const SizedBox(height: 20),
-                          SizedBox(
-                            height: 560,
-                            child: _buildDataSection(context, docs),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final isWide = constraints.maxWidth >= 1200;
+                              final statsPanel = _buildStatsPanel(
+                                totalDocuments: allDocs.length,
+                                withAttachments: withAttachments,
+                                withoutActionTaken: withoutActionTaken,
+                              );
+
+                              return isWide
+                                  ? Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        SizedBox(
+                                          width: 360,
+                                          child: statsPanel,
+                                        ),
+                                        const SizedBox(width: 18),
+                                        Expanded(
+                                          child: SizedBox(
+                                            height: panelHeight,
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                _buildToolbar(context),
+                                                const SizedBox(height: 20),
+                                                Expanded(
+                                                  child: _buildDataSection(
+                                                    context,
+                                                    docs,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        _buildToolbar(context),
+                                        const SizedBox(height: 20),
+                                        statsPanel,
+                                        const SizedBox(height: 20),
+                                        SizedBox(
+                                          height: panelHeight,
+                                          child: _buildDataSection(
+                                            context,
+                                            docs,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                            },
                           ),
                         ],
                       ),
@@ -1371,70 +992,109 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text(
-                  'Admin Dashboard',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  'Monitor routed records, update action taken, and maintain incoming document details in one place.',
-                  style: TextStyle(
-                    color: Color(0xFFF8EEDA),
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 18),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 900;
+          const bannerText = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              _BannerPill(
-                icon: Icons.admin_panel_settings_outlined,
-                label: 'GSO Admin',
-              ),
-              _BannerPill(
-                icon: Icons.monitor_heart_outlined,
-                label: _isDark ? 'Dark Mode' : 'Light Mode',
-              ),
-              IconButton(
-                onPressed: _toggleTheme,
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white.withOpacity(0.12),
-                  foregroundColor: const Color(0xFFF8EEDA),
+              Text(
+                'Admin Dashboard',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  height: 1.15,
                 ),
-                icon: Icon(
-                  _isDark
-                      ? Icons.light_mode_outlined
-                      : Icons.dark_mode_outlined,
-                ),
-                tooltip: 'Toggle theme',
               ),
-              IconButton(
-                onPressed: _logout,
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white.withOpacity(0.12),
-                  foregroundColor: const Color(0xFFF8EEDA),
+              SizedBox(height: 10),
+              Text(
+                'Monitor routed records, update action taken, and maintain incoming document details in one place.',
+                style: TextStyle(
+                  color: Color(0xFFF8EEDA),
+                  fontSize: 14,
+                  height: 1.5,
                 ),
-                icon: const Icon(Icons.logout),
-                tooltip: 'Logout',
               ),
             ],
-          ),
-        ],
+          );
+
+          return Flex(
+            direction: compact ? Axis.vertical : Axis.horizontal,
+            crossAxisAlignment: compact
+                ? CrossAxisAlignment.start
+                : CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withOpacity(0.16)),
+                ),
+                child: Image.asset(
+                  'assets/images/company_logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Icon(
+                    Icons.admin_panel_settings_outlined,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+              ),
+              SizedBox(width: compact ? 0 : 20, height: compact ? 16 : 0),
+              if (compact) bannerText else const Expanded(child: bannerText),
+              SizedBox(width: compact ? 0 : 16, height: compact ? 20 : 0),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _toggleTheme,
+                    icon: Icon(
+                      _isDark ? Icons.light_mode_outlined : Icons.dark_mode,
+                    ),
+                    label: Text(_isDark ? 'Light Mode' : 'Dark Mode'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withOpacity(0.28)),
+                      backgroundColor: Colors.white.withOpacity(0.06),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 16,
+                      ),
+                    ),
+                  ),
+                  const _BannerPill(
+                    icon: Icons.admin_panel_settings_outlined,
+                    label: 'GSO Admin',
+                  ),
+                  _BannerPill(
+                    icon: Icons.calendar_today_outlined,
+                    label: DateFormat('MMMM dd, yyyy').format(DateTime.now()),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _logout,
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Logout'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withOpacity(0.28)),
+                      backgroundColor: Colors.white.withOpacity(0.06),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1463,6 +1123,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             width: 360,
             child: TextField(
               controller: _searchController,
+              focusNode: _searchFocusNode,
               decoration: InputDecoration(
                 hintText:
                     'Search by date, office, control no., person, or action',
@@ -1483,14 +1144,387 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 ),
               ),
               style: TextStyle(color: _primaryText),
-              onChanged: (value) {
-                setState(() {
-                  _searchText = value;
-                });
-              },
+              onChanged: _onSearchChanged,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildStatsPanel({
+    required int totalDocuments,
+    required int withAttachments,
+    required int withoutActionTaken,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Admin Overview',
+          style: TextStyle(
+            color: _primaryText,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 16),
+        _DashboardStatCard(
+          title: 'Total Registry',
+          value: '$totalDocuments',
+          subtitle: 'All encoded documents',
+          icon: Icons.inventory_2_outlined,
+          highlightColor: _primaryColor,
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+        const SizedBox(height: 16),
+        _DashboardStatCard(
+          title: 'With Attachment',
+          value: '$withAttachments',
+          subtitle: 'PDF documents available',
+          icon: Icons.attach_file_outlined,
+          highlightColor: const Color(0xFF5A7D9A),
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+        const SizedBox(height: 16),
+        _DashboardStatCard(
+          title: 'Without Action Taken',
+          value: '$withoutActionTaken',
+          subtitle: 'Registry without action taken',
+          icon: Icons.pending_actions_outlined,
+          highlightColor: _successColor,
+          darkMode: _isDark,
+          totalDocuments: totalDocuments,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showViewMoreDialog(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    int initialIndex,
+  ) async {
+    int currentIndex = initialIndex;
+
+    Widget infoRow(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 132,
+              child: Text(
+                '$label:',
+                style: TextStyle(
+                  color: _secondaryText,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value.trim().isEmpty ? '-' : value,
+                style: TextStyle(color: _primaryText, fontSize: 14, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget infoCard(String title, List<Widget> children) {
+      return Card(
+        color: _cardBackground,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: _effectiveBorder),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: _primaryText,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...children,
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget attachmentRow({
+      required String docId,
+      required String label,
+      required String fileName,
+      required String fileUrl,
+      VoidCallback? uploadAction,
+    }) {
+      final hasFile = fileUrl.trim().isNotEmpty;
+      final displayName = fileName.trim().isNotEmpty
+          ? fileName.trim()
+          : hasFile
+          ? 'Download File'
+          : 'No attachment';
+
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 132,
+              child: Text(
+                '$label:',
+                style: TextStyle(
+                  color: _secondaryText,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _softBackground,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _effectiveBorder),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      hasFile
+                          ? Icons.download_for_offline_outlined
+                          : Icons.insert_drive_file_outlined,
+                      color: hasFile ? _primaryColor : _secondaryText,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: hasFile ? _primaryText : _secondaryText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (uploadAction != null)
+                      IconButton(
+                        onPressed: uploadAction,
+                        icon: const Icon(Icons.upload_file_outlined),
+                        color: _primaryColor,
+                        tooltip: 'Upload',
+                      ),
+                    IconButton(
+                      onPressed: hasFile
+                          ? () => _downloadAttachment(docId, fileUrl, fileName)
+                          : null,
+                      icon: const Icon(Icons.download_outlined),
+                      color: _primaryColor,
+                      tooltip: 'Download',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final currentDoc = docs[currentIndex];
+          final data = currentDoc.data();
+          final controlNumber = (data['controlNumber'] ?? '').toString();
+
+          return AlertDialog(
+            backgroundColor: _pageBackground,
+            elevation: 12,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Document Details',
+                        style: TextStyle(
+                          color: _primaryText,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 20,
+                        ),
+                      ),
+                      Text(
+                        'Control Number: ${controlNumber.trim().isEmpty ? '-' : controlNumber}',
+                        style: TextStyle(color: _secondaryText, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  icon: Icon(Icons.close, color: _primaryText),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 920,
+              height: 600,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isCompact = constraints.maxWidth < 720;
+                  final coreInfo = infoCard('Core Info', [
+                    infoRow('Date Received', _formatDate(_extractTimestamp(data))),
+                    infoRow('Control Number', controlNumber),
+                    infoRow('Office', (data['office'] ?? '').toString()),
+                    infoRow('Particular', (data['particular'] ?? '').toString()),
+                    infoRow('RDS Code', (data['rdsCode'] ?? '').toString()),
+                  ]);
+                  final routing = infoCard('Routing & History', [
+                    infoRow('Forwarded To', (data['forwardedTo'] ?? '').toString()),
+                    infoRow('Received By', (data['receivedBy'] ?? '').toString()),
+                    infoRow('Comment', (data['comment'] ?? '').toString()),
+                    infoRow('Action Taken', (data['actionTaken'] ?? '').toString()),
+                    infoRow('File Location', _fileLocationFromData(data)),
+                    infoRow('Remarks', (data['remarks'] ?? '').toString()),
+                  ]);
+                  final attachments = infoCard('Attachments', [
+                    attachmentRow(
+                      docId: currentDoc.id,
+                      label: 'Received Document',
+                      fileName: (data['pdfFileName'] ?? '').toString(),
+                      fileUrl: (data['scannedFileUrl'] ?? '').toString(),
+                    ),
+                    attachmentRow(
+                      docId: currentDoc.id,
+                      label: 'Document',
+                      fileName: (data['adminDocumentFileName'] ?? '').toString(),
+                      fileUrl: (data['adminDocumentUrl'] ?? '').toString(),
+                      uploadAction: () => _uploadAdminDocument(currentDoc.id),
+                    ),
+                  ]);
+
+                  return SingleChildScrollView(
+                    child: isCompact
+                        ? Column(children: [coreInfo, routing, attachments])
+                        : Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: Column(children: [coreInfo, attachments])),
+                              const SizedBox(width: 16),
+                              Expanded(child: routing),
+                            ],
+                          ),
+                  );
+                },
+              ),
+            ),
+            actions: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: currentIndex > 0
+                            ? () => setDialogState(() => currentIndex -= 1)
+                            : null,
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Back'),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: currentIndex < docs.length - 1
+                            ? () => setDialogState(() => currentIndex += 1)
+                            : null,
+                        icon: const Icon(Icons.arrow_forward),
+                        label: const Text('Next'),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Close'),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () => _showCellDialog(
+                          title: 'Action Taken',
+                          value: (data['actionTaken'] ?? '').toString(),
+                          docId: currentDoc.id,
+                          field: 'actionTaken',
+                          editable: true,
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _successColor,
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.edit_note_outlined),
+                        label: const Text('Action Taken'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () => _showCellDialog(
+                          title: 'Remarks',
+                          value: (data['remarks'] ?? '').toString(),
+                          docId: currentDoc.id,
+                          field: 'remarks',
+                          editable: true,
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _accentColor,
+                          foregroundColor: Colors.black87,
+                        ),
+                        icon: const Icon(Icons.comment_outlined),
+                        label: const Text('Remarks'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () => _showCellDialog(
+                          title: 'File Location',
+                          value: _fileLocationFromData(data),
+                          docId: currentDoc.id,
+                          field: 'fileLocation',
+                          editable: true,
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF5A7D9A),
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.folder_open_outlined),
+                        label: const Text('File Location'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1499,72 +1533,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     BuildContext context,
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
-    try {
-      return _buildDataSectionContent(context, docs);
-    } catch (error, stackTrace) {
-      return _buildRegistryErrorDetails(error, stackTrace);
-    }
-  }
-
-  Widget _buildRegistryErrorDetails(Object error, StackTrace stackTrace) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: _cardBackground,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.red.shade700),
-      ),
-      child: SingleChildScrollView(
-        child: SelectableText(
-          'Admin registry render error:\n$error\n\n$stackTrace',
-          style: TextStyle(color: _primaryText, fontSize: 12, height: 1.4),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDataSectionContent(
-    BuildContext context,
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
-    const columnWidths = <double>[
-      144,
-      168,
-      168,
-      192,
-      166,
-      136,
-      164,
-      226,
-      176,
-      158,
-      164,
-      190,
-      190,
-      184,
-      190,
-      140,
-    ];
-    const columnLabels = <String>[
-      'Date Received',
-      'Filing Code',
-      'Retention Period',
-      'File Location',
-      'Disposition Date',
-      'Control Number',
-      'Office',
-      'Particular',
-      'Received Document',
-      'Forwarded To',
-      'Received By',
-      'Comment',
-      'Action Taken',
-      'Document',
-      'Remarks',
-      'Actions',
-    ];
-    const tableMinWidth = 2956.0;
-
     return Container(
       decoration: BoxDecoration(
         color: _cardBackground,
@@ -1644,341 +1612,147 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       ),
                     ),
                   )
-                : _AdminRegistryScroller(
-                    tableMinWidth: tableMinWidth,
-                    scrollControlBuilder: _buildHorizontalScrollControl,
-                    child: SizedBox(
-                      width: tableMinWidth,
-                      child: Column(
-                          children: [
-                            Container(
-                              height: 52,
-                              color: _tableHeaderBackground,
-                              child: Row(
-                                children: List.generate(columnLabels.length, (
-                                  index,
-                                ) {
-                                  return SizedBox(
-                                    width: columnWidths[index],
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                      ),
-                                      child: Text(
-                                        columnLabels[index],
-                                        style: TextStyle(
-                                          color: _primaryText,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final tableMinWidth = constraints.maxWidth > 1000
+                          ? constraints.maxWidth
+                          : 1000.0;
+
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(minWidth: tableMinWidth),
+                            child: DataTable(
+                              showCheckboxColumn: false,
+                              columnSpacing: 18,
+                              horizontalMargin: 16,
+                              dataRowMinHeight: 72,
+                              dataRowMaxHeight: 90,
+                              headingRowHeight: 58,
+                              dividerThickness: 0.6,
+                              headingTextStyle: TextStyle(
+                                color: _primaryText,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              headingRowColor: WidgetStateProperty.all(
+                                _tableHeaderBackground,
+                              ),
+                              border: TableBorder(
+                                horizontalInside: BorderSide(
+                                  color: _effectiveBorder,
+                                ),
+                              ),
+                              columns: const [
+                                DataColumn(label: Text('Control Number')),
+                                DataColumn(label: Text('Date Received')),
+                                DataColumn(label: Text('Office')),
+                                DataColumn(label: Text('Particular')),
+                                DataColumn(label: Text('Comment')),
+                                DataColumn(label: Text('Access')),
+                                DataColumn(label: Text('Actions')),
+                              ],
+                              rows: docs.asMap().entries.map((entry) {
+                                final index = entry.key;
+                                final doc = entry.value;
+                                final data = doc.data();
+                                final isConfidential =
+                                    _isConfidentialFromData(data);
+                                final accessLabel = isConfidential
+                                    ? 'Confidential'
+                                    : 'Open';
+
+                                return DataRow(
+                                  onSelectChanged: (_) {
+                                    _showViewMoreDialog(docs, index);
+                                  },
+                                  color: WidgetStateProperty.all(
+                                    index.isEven
+                                        ? _softBackground.withOpacity(0.3)
+                                        : null,
+                                  ),
+                                  cells: [
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        (data['controlNumber'] ?? '').toString(),
+                                        label: 'Control Number',
+                                        width: 140,
                                       ),
                                     ),
-                                  );
-                                }),
-                              ),
-                            ),
-                            ...docs.map((doc) {
-                              final data = doc.data();
-                              final cells = <Widget>[
-                                _buildReadOnlyCell(
-                                          _formatDate(_extractTimestamp(data)),
-                                          label: 'Date Received',
-                                          width: 144,
-                                        ),
-                                _buildReadOnlyCell(
-                                          _filingCodeFromData(data),
-                                          label: 'Filing Code',
-                                          width: 168,
-                                        ),
-                                _buildReadOnlyCell(
-                                          _retentionPeriodFromData(data),
-                                          label: 'Retention Period',
-                                          width: 168,
-                                        ),
-                                _buildEditableCell(
-                                          doc.id,
-                                          'fileLocation',
-                                          _fileLocationFromData(data),
-                                          label: 'File Location',
-                                          width: 192,
-                                        ),
-                                _buildReadOnlyCell(
-                                          _dispositionDateFromData(data),
-                                          label: 'Disposition Date',
-                                          width: 166,
-                                        ),
-                                _buildReadOnlyCell(
-                                          (data['controlNumber'] ?? '')
-                                              .toString(),
-                                          label: 'Control Number',
-                                          width: 136,
-                                        ),
-                                _buildReadOnlyCell(
-                                          (data['office'] ?? '').toString(),
-                                          label: 'Office',
-                                          width: 164,
-                                        ),
-                                _buildReadOnlyCell(
-                                          (data['particular'] ?? '').toString(),
-                                          label: 'Particular',
-                                          width: 226,
-                                        ),
-                                _buildReadOnlyCell(
-                                          ((data['pdfFileName'] ?? '')
-                                                      .toString()
-                                                      .trim())
-                                                  .isNotEmpty
-                                              ? (data['pdfFileName'] ?? '')
-                                                    .toString()
-                                              : (data['scannedFileUrl'] ?? '')
-                                                    .toString()
-                                                    .trim()
-                                                    .isNotEmpty
-                                              ? 'PDF attached'
-                                              : 'No attachment',
-                                          label: 'Received Document',
-                                          width: 176,
-                                        ),
-                                _buildReadOnlyCell(
-                                          (data['forwardedTo'] ?? '').toString(),
-                                          label: 'Forwarded To',
-                                          width: 158,
-                                        ),
-                                _buildReadOnlyCell(
-                                          (data['receivedBy'] ?? '').toString(),
-                                          label: 'Received By',
-                                          width: 164,
-                                        ),
-                                _buildReadOnlyCell(
-                                          (data['comment'] ?? '').toString(),
-                                          label: 'Comment',
-                                          width: 190,
-                                        ),
-                                _buildEditableCell(
-                                          doc.id,
-                                          'actionTaken',
-                                          (data['actionTaken'] ?? '')
-                                              .toString(),
-                                          label: 'Action Taken',
-                                          width: 190,
-                                        ),
-                                SizedBox(
-                                          width: 184,
-                                          child: Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              TextButton.icon(
-                                                style: TextButton.styleFrom(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 0,
-                                                      ),
-                                                  minimumSize: const Size(
-                                                    0,
-                                                    32,
-                                                  ),
-                                                  tapTargetSize:
-                                                      MaterialTapTargetSize
-                                                          .shrinkWrap,
-                                                ),
-                                                onPressed: () =>
-                                                    _uploadAdminDocument(doc.id),
-                                                icon: const Icon(
-                                                  Icons.upload_file_outlined,
-                                                  size: 16,
-                                                ),
-                                                label: Text(
-                                                  ((data['adminDocumentFileName'] ??
-                                                                  '')
-                                                              .toString()
-                                                              .trim())
-                                                          .isNotEmpty
-                                                      ? (data['adminDocumentFileName'] ??
-                                                                '')
-                                                            .toString()
-                                                      : 'Upload Attachment',
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ),
-                                              if ((data['adminDocumentUrl'] ??
-                                                      '')
-                                                  .toString()
-                                                  .trim()
-                                                  .isNotEmpty)
-                                                TextButton(
-                                                  style: TextButton.styleFrom(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 12,
-                                                          vertical: 0,
-                                                        ),
-                                                    minimumSize: const Size(
-                                                      0,
-                                                      30,
-                                                    ),
-                                                    tapTargetSize:
-                                                        MaterialTapTargetSize
-                                                            .shrinkWrap,
-                                                  ),
-                                                  onPressed: () =>
-                                                      _downloadAttachment(
-                                                        doc.id,
-                                                        (data['adminDocumentUrl'] ??
-                                                                '')
-                                                            .toString(),
-                                                        (data['adminDocumentFileName'] ??
-                                                                '')
-                                                            .toString(),
-                                                      ),
-                                                  child: const Text(
-                                                    'Download',
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                    ),
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                        ),
-                                _buildEditableCell(
-                                          doc.id,
-                                          'remarks',
-                                          (data['remarks'] ?? '').toString(),
-                                          label: 'Remarks',
-                                          width: 190,
-                                        ),
-                                SizedBox(
-                                          width: 140,
-                                          child: Center(
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                IconButton(
-                                                  onPressed: () =>
-                                                      _showUpdateRegistryDialog(
-                                                    doc.id,
-                                                    data,
-                                                  ),
-                                                  icon: const Icon(
-                                                    Icons.edit_note_outlined,
-                                                  ),
-                                                  iconSize: 22,
-                                                  splashRadius: 20,
-                                                  padding: EdgeInsets.zero,
-                                                  constraints:
-                                                      const BoxConstraints(
-                                                    minWidth: 36,
-                                                    minHeight: 36,
-                                                  ),
-                                                  tooltip: 'Update registry',
-                                                ),
-                                                const SizedBox(width: 8),
-                                                IconButton(
-                                                  onPressed: () =>
-                                                      exportRoutingSlipPdf(data),
-                                                  icon: const Icon(
-                                                    Icons.picture_as_pdf_outlined,
-                                                  ),
-                                                  iconSize: 21,
-                                                  splashRadius: 20,
-                                                  padding: EdgeInsets.zero,
-                                                  constraints:
-                                                      const BoxConstraints(
-                                                    minWidth: 36,
-                                                    minHeight: 36,
-                                                  ),
-                                                  tooltip:
-                                                      'Export Routing Slip PDF',
-                                              ),
-                                              ],
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        _formatDate(_extractTimestamp(data)),
+                                        label: 'Date Received',
+                                        width: 120,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        (data['office'] ?? '').toString(),
+                                        label: 'Office',
+                                        width: 140,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        (data['particular'] ?? '').toString(),
+                                        label: 'Particular',
+                                        width: 220,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        (data['comment'] ?? '').toString(),
+                                        label: 'Comment',
+                                        width: 220,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      _buildReadOnlyCell(
+                                        accessLabel,
+                                        label: 'Access',
+                                        width: 110,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      SizedBox(
+                                        width: 130,
+                                        child: ElevatedButton(
+                                          onPressed: () =>
+                                              _showViewMoreDialog(docs, index),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                const Color(0xFF5A7D9A),
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 12,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
                                             ),
                                           ),
+                                          child: const Text(
+                                            'View More',
+                                            style: TextStyle(fontSize: 12),
+                                          ),
                                         ),
-                              ];
-
-                              return Container(
-                                height: 88,
-                                decoration: BoxDecoration(
-                                  border: Border(
-                                    bottom: BorderSide(
-                                      color: _effectiveBorder,
-                                      width: 0.6,
+                                      ),
                                     ),
-                                  ),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: cells,
-                                ),
-                              );
-                            }),
-                          ],
+                                  ],
+                                );
+                              }).toList(),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-            ),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
-    );
-  }
-}
-
-class _AdminRegistryScroller extends StatefulWidget {
-  const _AdminRegistryScroller({
-    required this.child,
-    required this.scrollControlBuilder,
-    required this.tableMinWidth,
-  });
-
-  final Widget child;
-  final Widget Function(ScrollController controller) scrollControlBuilder;
-  final double tableMinWidth;
-
-  @override
-  State<_AdminRegistryScroller> createState() => _AdminRegistryScrollerState();
-}
-
-class _AdminRegistryScrollerState extends State<_AdminRegistryScroller> {
-  final ScrollController _horizontalController = ScrollController();
-
-  @override
-  void dispose() {
-    _horizontalController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: SingleChildScrollView(
-              controller: _horizontalController,
-              scrollDirection: Axis.horizontal,
-              child: widget.child,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: widget.scrollControlBuilder(_horizontalController),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1991,6 +1765,7 @@ class _DashboardStatCard extends StatelessWidget {
     required this.icon,
     required this.highlightColor,
     required this.darkMode,
+    required this.totalDocuments,
   });
 
   final String title;
@@ -1999,18 +1774,34 @@ class _DashboardStatCard extends StatelessWidget {
   final IconData icon;
   final Color highlightColor;
   final bool darkMode;
+  final int totalDocuments;
 
   @override
   Widget build(BuildContext context) {
+    final progressValue = totalDocuments > 0
+        ? (int.tryParse(value) ?? 0) / totalDocuments
+        : 0.0;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: darkMode ? const Color(0xFF1A212B) : Colors.white,
+        gradient: LinearGradient(
+          colors: darkMode
+              ? [const Color(0xFF1A212B), const Color(0xFF2A3441)]
+              : [Colors.white, const Color(0xFFF8F8F8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: darkMode ? const Color(0xFF344252) : const Color(0xFFD8CEC0),
         ),
-        boxShadow: const [
+        boxShadow: [
+          BoxShadow(
+            color: highlightColor.withOpacity(0.15),
+            blurRadius: 25,
+            offset: const Offset(0, 12),
+          ),
           BoxShadow(
             color: Color(0x12000000),
             blurRadius: 16,
@@ -2074,6 +1865,12 @@ class _DashboardStatCard extends StatelessWidget {
               fontSize: 13,
             ),
           ),
+          const SizedBox(height: 12),
+          LinearProgressIndicator(
+            value: progressValue,
+            backgroundColor: highlightColor.withOpacity(0.1),
+            valueColor: AlwaysStoppedAnimation<Color>(highlightColor),
+          ),
         ],
       ),
     );
@@ -2112,3 +1909,6 @@ class _BannerPill extends StatelessWidget {
     );
   }
 }
+
+
+
